@@ -27,7 +27,7 @@
 Worker 名称必须与 `apps/web/wrangler.jsonc` 的 `name` 一致：
 
 ```text
-mediaforge-web
+media-forge
 ```
 
 ## Cloudflare Workers Builds 配置
@@ -38,7 +38,7 @@ mediaforge-web
 
 ```text
 Project type: Workers
-Worker name: mediaforge-web
+Worker name: media-forge
 Repository: JourneyJu/media-forge
 Branch: main
 Root directory: /
@@ -52,7 +52,7 @@ Deploy command: pnpm cf:web:deploy
 - `pnpm cf:web:build` 会进入 `@mediaforge/web`，执行 `opennextjs-cloudflare build`，生成 Worker 和静态资产产物。
 - `pnpm cf:web:deploy` 会上传上一步生成的 OpenNext/Workers 产物。
 - Workers Builds 会在 Cloudflare 的 Linux 构建环境里执行，不依赖本机 Windows。
-- Worker 名称必须是 `mediaforge-web`，否则 Workers Builds 会因为 Wrangler 配置名称不匹配而失败。
+- Worker 名称必须是 `media-forge`，否则 Workers Builds 会因为 Wrangler 配置名称不匹配而失败。
 
 ## 环境变量
 
@@ -103,4 +103,4 @@ pnpm cf:web:deploy
 https://9e9b3e59.media-forge.pages.dev
 ```
 
-该项目可以暂时保留作为 GitHub 集成验证，但不要作为正式 Next.js 生产入口。正式入口应使用 `mediaforge-web` Worker 的部署地址。
+该项目可以暂时保留作为 GitHub 集成验证，但不要作为正式 Next.js 生产入口。正式入口应使用 `media-forge` Worker 的部署地址。

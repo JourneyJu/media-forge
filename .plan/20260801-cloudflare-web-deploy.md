@@ -27,7 +27,7 @@ allowed_files_added:
   - docs/runbooks/cloudflare-web-deploy.md
 builds_configuration:
   project_type: Workers
-  worker_name: mediaforge-web
+  worker_name: media-forge
   repository: JourneyJu/media-forge
   branch: main
   root_directory: /
