@@ -73,6 +73,7 @@ allowed_files:
   - .gitignore
   - Dockerfile
   - apps/auth/package.json
+  - apps/auth/src/password.ts
   - apps/service/package.json
   - apps/worker/package.json
   - packages/contracts/package.json
