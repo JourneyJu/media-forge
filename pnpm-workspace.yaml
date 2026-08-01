@@ -6,6 +6,7 @@ confirmModulesPurge: false
 
 overrides:
   "@opennextjs/aws>@aws-sdk/client-dynamodb": 3.398.0
+  "@opennextjs/aws>@aws-sdk/client-cloudfront": 3.398.0
   "@opennextjs/aws>@aws-sdk/client-lambda": 3.398.0
   "@opennextjs/aws>@aws-sdk/client-s3": 3.398.0
   "@opennextjs/aws>@aws-sdk/client-sqs": 3.398.0

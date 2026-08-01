@@ -24,6 +24,14 @@
 - `apps/web/package.json`
 - `package.json`
 
+当前 Cloudflare adapter 版本：
+
+```text
+@opennextjs/cloudflare 1.19.11
+```
+
+该版本匹配项目当前的 Next.js `15.5.x`。不要降回 `1.6.x`，旧版本可构建但可能在 Cloudflare Worker 运行时抛 1101。
+
 Worker 名称必须与 `apps/web/wrangler.jsonc` 的 `name` 一致：
 
 ```text

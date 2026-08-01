@@ -43,6 +43,22 @@ builds_configuration:
 - `open-next.config.ts` 改用 `@opennextjs/cloudflare` 顶层导入。
 - runbook 改写为正式 Workers Builds 部署说明，并明确 Pages 项目仅作为 GitHub 集成验证，不作为正式入口。
 
+## 2026-08-01 后续修订：升级 OpenNext 适配 Next 15.5
+
+线上 Worker 部署成功后访问 `/login?next=%2F` 返回 Cloudflare Error 1101。结合本地依赖事实，`@opennextjs/cloudflare@1.6.5` 对 Next 15.5.21 过旧，存在构建成功但运行时不兼容风险。
+
+本次修订：
+
+- 将 `@opennextjs/cloudflare` 从 `1.6.5` 升级到 `1.19.11`。
+- `1.19.11` 的 peer dependency 覆盖 `next >=15.5.18 <16`，匹配当前 `next@15.5.21`。
+- 补充 `@opennextjs/aws>@aws-sdk/client-cloudfront` override，绕过当前 npm registry 中 `@smithy/core@^3.31.1` 尚不可用导致的依赖解析问题。
+
+验证：
+
+- `pnpm cf:web:typecheck` 通过。
+- `pnpm --filter @mediaforge/web build` 通过。
+- `pnpm cf:web:build` 在 Windows 本机仍因 Next standalone symlink 权限失败，属于既有环境限制；Cloudflare Linux 构建环境应作为正式验证来源。
+
 ## 非目标
 
 - 不迁移 `apps/service` 到 Cloudflare Workers。
