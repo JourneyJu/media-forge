@@ -15,6 +15,34 @@
 是否需要人工确认：是
 ```
 
+## 2026-08-01 后续修订：正式部署改为 Workers Builds
+
+用户已在 Cloudflare 中验证 GitHub 构建触发成功，但当前成功记录属于 Cloudflare Pages 项目 `media-forge`，且构建命令只执行 `pnpm --filter @mediaforge/web typecheck`，不等同于 Next.js/OpenNext 正式发布。
+
+本次修订将正式发布入口明确为 Cloudflare Workers Builds：
+
+```yaml
+allowed_files_added:
+  - package.json
+  - docs/runbooks/cloudflare-web-deploy.md
+builds_configuration:
+  project_type: Workers
+  worker_name: mediaforge-web
+  repository: JourneyJu/media-forge
+  branch: main
+  root_directory: /
+  install_command: pnpm install --frozen-lockfile
+  build_command: pnpm cf:web:build
+  deploy_command: pnpm cf:web:deploy
+```
+
+变更说明：
+
+- 根 `package.json` 新增 `cf:web:build` 和 `cf:web:deploy`，让 Cloudflare 控制台命令更稳定。
+- `apps/web` 的 `preview` 脚本改为 `opennextjs-cloudflare build && opennextjs-cloudflare preview`，对齐 Cloudflare 当前 Next.js Workers 文档。
+- `open-next.config.ts` 改用 `@opennextjs/cloudflare` 顶层导入。
+- runbook 改写为正式 Workers Builds 部署说明，并明确 Pages 项目仅作为 GitHub 集成验证，不作为正式入口。
+
 ## 非目标
 
 - 不迁移 `apps/service` 到 Cloudflare Workers。
