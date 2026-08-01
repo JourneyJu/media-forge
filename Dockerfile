@@ -10,6 +10,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
 
+RUN pnpm config set registry https://registry.npmmirror.com
 RUN pnpm install --frozen-lockfile
 
 ARG PACKAGE_FILTER
