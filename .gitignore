@@ -15,6 +15,7 @@ coverage/
 .env.local
 apps/service/.env
 apps/web/.env
+infra/docker/.env.prod
 
 # Logs
 *.log

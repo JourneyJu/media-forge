@@ -1,0 +1,13 @@
+{$APP_DOMAIN} {
+  encode gzip zstd
+
+  @auth path /auth/*
+  reverse_proxy @auth auth:4100
+
+  @service {
+    path /health /admin/model-* /admin/usage* /workspaces* /ai/* /agent-runs* /upload-sessions* /resources* /conversations* /runs* /artifacts*
+  }
+  reverse_proxy @service service:4000
+
+  reverse_proxy web:3000
+}
