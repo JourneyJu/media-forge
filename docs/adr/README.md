@@ -1,0 +1,31 @@
+# ADR
+
+ADR 用于记录影响长期架构的决策。
+
+需要写 ADR 的情况：
+
+- 服务边界变化。
+- 数据库 schema 大改。
+- 引入新的基础设施或外部依赖。
+- 修改对象存储布局。
+- 修改 AI 模型路由或长期记忆策略。
+
+文件命名：
+
+```text
+0001-short-title.md
+```
+
+## 当前决策
+
+| ADR | 状态 | 说明 |
+| --- | --- | --- |
+| `001-wechat-copy-html-and-model-gateway.md` | Accepted | 微信复制 HTML 和模型网关。 |
+| `002-agent-orchestration-and-review-loop.md` | Accepted | Agent 编排与审阅循环。 |
+| `003-auto-run-with-clarification-only.md` | Accepted | 自动执行，只在信息不足时追问。 |
+| `004-langgraph-bullmq-multi-agent-architecture.md` | Accepted | LangGraph + BullMQ 多 Agent 架构。 |
+| `005-conversation-as-creation-workspace.md` | Proposed | Conversation 作为用户可见创作空间和删除聚合根。 |
+| `006-independent-auth-service-and-rbac.md` | Proposed | 独立认证服务与 RBAC 权限模型。 |
+| `007-single-system-user-and-admin-role.md` | Proposed | 保留独立认证服务，将产品权限模型收敛为单系统 `admin/user` 双角色。 |
+| `008-database-model-configuration-and-capability-routing.md` | Proposed | 模型连接、模型配置和默认能力路由入库，并对供应商凭据加密。 |
+| `009-generation-and-model-usage-metering.md` | Proposed | 将用户生成事件与真实模型调用分离计量，支持用户和模型双维度统计。 |

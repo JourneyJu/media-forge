@@ -1,0 +1,21 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+confirmModulesPurge: false
+
+overrides:
+  "@opennextjs/aws>@aws-sdk/client-dynamodb": 3.398.0
+  "@opennextjs/aws>@aws-sdk/client-lambda": 3.398.0
+  "@opennextjs/aws>@aws-sdk/client-s3": 3.398.0
+  "@opennextjs/aws>@aws-sdk/client-sqs": 3.398.0
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - workerd
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+  sharp: true
+  workerd: true
