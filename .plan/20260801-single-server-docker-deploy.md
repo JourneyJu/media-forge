@@ -2,7 +2,7 @@
 
 ## 需求背景
 
-用户明确放弃之前的 Cloudflare、Railway、Supabase 等托管拆分部署方式，改为使用一台自有服务器，通过 Docker 部署 MediaForge 的 Web、Auth、Service、Worker、PostgreSQL、Redis 和对象存储。
+用户明确放弃之前的 Cloudflare、Railway、Supabase 等托管拆分部署方式，改为使用一台自有服务器，通过 Docker 部署 MediaForge 的 Web、Auth、Service、Worker、PostgreSQL、Redis 和对象存储。随后用户指定服务器地址 `146.56.198.214`，要求使用 Nginx 统一代理，先只开放 80 端口，并做一套本地 CI/CD 发布脚本。
 
 这属于 L 级改动，因为部署边界、运行时拓扑、外部依赖落点、生产环境变量和安全暴露面都发生变化。
 
@@ -19,6 +19,7 @@
 
 - 不继续推进 Cloudflare Workers / Pages 的正式部署。
 - 不继续推进 Railway、Neon、Supabase、PlanetScale、R2 等托管组合方案。
+- 不在本次启用 HTTPS，先按用户要求使用 80 端口。
 - 不修改业务 API 契约、数据库 schema 或前后端功能行为。
 - 不把真实密钥、token、密码或服务器 IP 写入仓库。
 - 不在本次接入真实模型供应商，默认保留 `MODEL_MODE=demo`。
@@ -34,15 +35,15 @@
 | 对象存储 | 是 | 使用同机 MinIO，S3 兼容接口。 |
 | Redis / 队列 | 是 | 使用同机 Redis，Worker 消费队列。 |
 | AI 调用链路 | 否 | 默认 demo 模式，不接真实模型。 |
-| 权限 / 安全 | 是 | Caddy 统一 HTTPS，数据库/Redis/MinIO 不暴露公网。 |
-| 部署 / 环境变量 | 是 | 新增生产 compose、Caddyfile、生产 env 示例。 |
+| 权限 / 安全 | 是 | Nginx 统一 80 端口入口，数据库/Redis/MinIO 不暴露公网。 |
+| 部署 / 环境变量 | 是 | 新增生产 compose、Nginx 配置、生产 env 示例。 |
 | 文档 | 是 | 新增单服务器部署 runbook。 |
 
 ## 方案设计
 
 采用单台服务器上的 Docker Compose：
 
-- `caddy` 作为公网入口，负责 80/443、自动 HTTPS 和路径反向代理。
+- `nginx` 作为公网入口，负责 80 端口和路径反向代理。
 - `web` 运行 Next.js 前端。
 - `auth` 运行认证服务。
 - `service` 运行业务 API 和创作调度入口。
@@ -51,7 +52,7 @@
 - `redis` 保存缓存、锁、限流和队列短期状态。
 - `minio` 提供 S3 兼容对象存储。
 
-公网只开放 80、443、22。PostgreSQL、Redis、MinIO 仅在 Docker 网络内访问。
+公网只开放 80、22。PostgreSQL、Redis、MinIO 仅在 Docker 网络内访问。
 
 ## 契约与数据变更
 
@@ -62,8 +63,6 @@
 - `postgres-data`
 - `redis-data`
 - `minio-data`
-- `caddy-data`
-- `caddy-config`
 
 ## allowed_files 草案
 
@@ -75,8 +74,9 @@ allowed_files:
   - Dockerfile
   - packages/contracts/package.json
   - infra/docker/docker-compose.prod.yml
-  - infra/docker/Caddyfile
+  - infra/docker/nginx.conf
   - infra/docker/.env.prod.example
+  - scripts/deploy-prod.sh
   - docs/runbooks/single-server-docker-deploy.md
 verification:
   - docker compose --env-file infra/docker/.env.prod.example -f infra/docker/docker-compose.prod.yml config
@@ -89,11 +89,12 @@ verification:
 ## 实施步骤
 
 1. 新增生产 Dockerfile 和 Compose 文件。
-2. 新增 Caddy 同源反向代理配置。
+2. 新增 Nginx 同源反向代理配置。
 3. 新增生产环境变量示例，并确保真实 `.env.prod` 被忽略。
-4. 新增单服务器部署 runbook。
+4. 新增单服务器部署 runbook 和本地发布脚本。
 5. 校验 compose 配置和 TypeScript 类型。
-6. 提交并推送到 GitHub。
+6. 登录服务器安装 Docker，生成 `.env.prod`，启动生产栈。
+7. 提交并推送到 GitHub。
 
 ## 验证方案
 
@@ -121,7 +122,7 @@ docker compose --env-file infra/docker/.env.prod -f infra/docker/docker-compose.
 | 单机故障 | 全站不可用 | 前期接受；上线后补服务器快照和数据库备份。 |
 | 磁盘占满 | 上传、数据库写入失败 | 定期监控磁盘，MinIO 和 Postgres 做备份/清理策略。 |
 | 密钥泄露 | 账号和数据风险 | `.env.prod` 不入库，只在服务器保存。 |
-| HTTPS 证书申请失败 | 无法公网访问 | 检查 DNS A 记录、80/443 安全组和 Caddy 日志。 |
+| 仅 HTTP | Cookie 和传输安全弱于 HTTPS | 前期按用户要求先用 80，后续绑定域名后切 HTTPS。 |
 | Docker 构建较慢 | 发布耗时 | 前期可接受；后续可拆分镜像和 CI 构建。 |
 
 ## AI 自审
@@ -129,10 +130,10 @@ docker compose --env-file infra/docker/.env.prod -f infra/docker/docker-compose.
 ```text
 AI 自审结论：通过
 分级复核：L 级成立，部署拓扑和生产依赖落点发生变化。
-服务边界：浏览器仍只访问 Web/Auth/Service 公网入口；数据库、Redis、MinIO 不直接暴露。
+服务边界：浏览器仍只访问 Nginx 公网入口；数据库、Redis、MinIO 不直接暴露。
 契约与数据：不修改 API 契约和 schema。
 异常路径：已记录 HTTPS、磁盘、单机故障和回滚路径。
-安全风险：真实密钥不入库；公网入口由 Caddy 统一控制。
+安全风险：真实密钥不入库；公网入口由 Nginx 统一控制；当前仅 HTTP，建议后续换 HTTPS。
 测试方案：先做 compose config 和 typecheck；服务器上线后补真实访问验证。
 反方意见：单机方案可用性低于托管拆分方案，但更适合前期低成本、低用户量场景。
 需要人工重点看的问题：服务器规格、域名 DNS、备份频率、是否需要公网 MinIO 控制台。
@@ -144,5 +145,5 @@ AI 自审结论：通过
 审核结论：已确认
 确认人：用户
 确认时间：2026-08-01
-备注：用户明确表示“放弃之前的部署方式，我现在改用服务器部署”。
+备注：用户明确表示“放弃之前的部署方式，我现在改用服务器部署”，并指定使用 Nginx 统一代理、先使用 80 端口。
 ```

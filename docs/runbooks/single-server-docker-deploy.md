@@ -1,6 +1,6 @@
-# 单台服务器 Docker 部署
+# 单台服务器 Docker + Nginx 部署
 
-本文记录 MediaForge 改为单台服务器部署的生产方案。
+本文记录 MediaForge 改为单台服务器部署的生产方案。当前方案使用 Nginx 统一代理，先只开放 80 端口。
 
 ## 服务器建议
 
@@ -22,7 +22,7 @@ Ubuntu 22.04 或 24.04 LTS
 生产 compose 会启动：
 
 ```text
-Caddy
+Nginx
 Next.js web
 auth
 service
@@ -32,31 +32,25 @@ Redis
 MinIO
 ```
 
-所有浏览器请求走同一个 HTTPS 域名：
+所有浏览器请求走同一个 HTTP 入口：
 
 ```text
-https://example.com
+http://146.56.198.214
 ```
 
-Caddy 路由：
+Nginx 路由：
 
 - `/auth/*` -> auth
-- `/conversations*`、`/runs*`、`/upload-sessions*`、`/resources*`、`/ai/*`、`/admin/model-*`、`/admin/usage*` -> service
+- `/conversations*`、`/runs*`、`/upload-sessions*`、`/resources*`、`/ai/*`、`/admin/model-*` -> service
+- `/admin/usage*` 按 `Accept` 头区分页面导航和 API 请求：页面走 web，接口走 service
 - 其他路径 -> web
 
-## DNS
+## 端口
 
-把域名 A 记录指向服务器公网 IP。
-
-```text
-example.com A <server-ip>
-```
-
-Caddy 会自动申请 HTTPS 证书。服务器安全组需要开放：
+服务器安全组需要开放：
 
 ```text
 80/tcp
-443/tcp
 22/tcp
 ```
 
@@ -67,15 +61,9 @@ Caddy 会自动申请 HTTPS 证书。服务器安全组需要开放：
 安装 Docker 和 Compose plugin。
 
 ```bash
-sudo apt update
-sudo apt install -y ca-certificates curl git openssl
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-```
-
-重新登录 SSH 后检查：
-
-```bash
+apt update
+apt install -y ca-certificates curl git openssl
+curl -fsSL https://get.docker.com | sh
 docker version
 docker compose version
 ```
@@ -85,7 +73,7 @@ docker compose version
 克隆仓库：
 
 ```bash
-git clone git@github.com:JourneyJu/media-forge.git
+git clone https://github.com/JourneyJu/media-forge.git
 cd media-forge
 ```
 
@@ -98,7 +86,7 @@ cp infra/docker/.env.prod.example infra/docker/.env.prod
 生成 RSA 私钥：
 
 ```bash
-openssl genrsa 2048 | awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' 
+openssl genrsa 2048 | awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}'
 ```
 
 分别生成两次，填入：
@@ -111,10 +99,9 @@ AUTH_PASSWORD_PRIVATE_KEY_PEM=
 修改 `infra/docker/.env.prod`：
 
 ```text
-APP_DOMAIN=你的域名
-PUBLIC_ORIGIN=https://你的域名
+PUBLIC_ORIGIN=http://146.56.198.214
 POSTGRES_PASSWORD=强密码
-MINIO_ROOT_PASSWORD=强密码
+MINIO_ROOT_PASSWORD=强密码，至少 16 位
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=初始管理员强密码
 ```
 
@@ -132,29 +119,38 @@ docker compose --env-file infra/docker/.env.prod -f infra/docker/docker-compose.
 docker compose --env-file infra/docker/.env.prod -f infra/docker/docker-compose.prod.yml logs -f
 ```
 
+## 本地 CI/CD
+
+服务器本地发布脚本：
+
+```bash
+bash scripts/deploy-prod.sh
+```
+
+脚本会执行：
+
+- `git pull --ff-only`
+- 校验 compose 配置
+- 构建 web、auth、service、worker 镜像
+- 启动或更新容器
+- 检查 `/health` 和 `/auth/password-key`
+
 ## 验证
 
 健康检查：
 
 ```bash
-curl -fsS https://你的域名/auth/password-key
-curl -fsS https://你的域名/health
+curl -fsS http://146.56.198.214/auth/password-key
+curl -fsS http://146.56.198.214/health
 ```
 
 浏览器打开：
 
 ```text
-https://你的域名
+http://146.56.198.214
 ```
 
 使用 `AUTH_BOOTSTRAP_ADMIN_ACCOUNT` 和 `AUTH_BOOTSTRAP_ADMIN_PASSWORD` 登录。首次登录后按页面提示修改密码。
-
-## 更新发布
-
-```bash
-git pull
-docker compose --env-file infra/docker/.env.prod -f infra/docker/docker-compose.prod.yml up -d --build
-```
 
 ## 备份
 
