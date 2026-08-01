@@ -16,6 +16,17 @@ describe("creation run queue", () => {
     });
   });
 
+  it("enables tls for rediss urls", () => {
+    expect(parseRedisConnection("rediss://default:secret@example.upstash.io:6379")).toEqual({
+      host: "example.upstash.io",
+      port: 6379,
+      username: "default",
+      password: "secret",
+      db: undefined,
+      tls: {}
+    });
+  });
+
   it("defaults to redis port 6379", () => {
     expect(parseRedisConnection("redis://localhost")).toMatchObject({
       host: "localhost",
