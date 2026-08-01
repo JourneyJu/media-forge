@@ -29,7 +29,7 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
 
 echo "==> Health checks"
 PUBLIC_ORIGIN="$(grep -E '^PUBLIC_ORIGIN=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2-)"
-curl -fsS "$PUBLIC_ORIGIN/health" >/dev/null
-curl -fsS "$PUBLIC_ORIGIN/auth/password-key" >/dev/null
+curl -fsSk "$PUBLIC_ORIGIN/health" >/dev/null
+curl -fsSk "$PUBLIC_ORIGIN/auth/password-key" >/dev/null
 
 echo "Deployment completed: $PUBLIC_ORIGIN"

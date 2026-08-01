@@ -2,7 +2,7 @@
 
 ## 需求背景
 
-用户明确放弃之前的 Cloudflare、Railway、Supabase 等托管拆分部署方式，改为使用一台自有服务器，通过 Docker 部署 MediaForge 的 Web、Auth、Service、Worker、PostgreSQL、Redis 和对象存储。随后用户指定服务器地址 `146.56.198.214`，要求使用 Nginx 统一代理，先只开放 80 端口，并做一套本地 CI/CD 发布脚本。
+用户明确放弃之前的 Cloudflare、Railway、Supabase 等托管拆分部署方式，改为使用一台自有服务器，通过 Docker 部署 MediaForge 的 Web、Auth、Service、Worker、PostgreSQL、Redis 和对象存储。随后用户指定服务器地址 `146.56.198.214`，要求使用 Nginx 统一代理，并做一套本地 CI/CD 发布脚本。由于当前没有域名，登录密码加密需要浏览器安全上下文，临时改为 HTTPS + IP + 自签名证书。
 
 这属于 L 级改动，因为部署边界、运行时拓扑、外部依赖落点、生产环境变量和安全暴露面都发生变化。
 
@@ -19,7 +19,7 @@
 
 - 不继续推进 Cloudflare Workers / Pages 的正式部署。
 - 不继续推进 Railway、Neon、Supabase、PlanetScale、R2 等托管组合方案。
-- 不在本次启用 HTTPS，先按用户要求使用 80 端口。
+- 不使用 HTTP 明文密码降级。
 - 不修改业务 API 契约、数据库 schema 或前后端功能行为。
 - 不把真实密钥、token、密码或服务器 IP 写入仓库。
 - 不在本次接入真实模型供应商，默认保留 `MODEL_MODE=demo`。
@@ -35,7 +35,7 @@
 | 对象存储 | 是 | 使用同机 MinIO，S3 兼容接口。 |
 | Redis / 队列 | 是 | 使用同机 Redis，Worker 消费队列。 |
 | AI 调用链路 | 否 | 默认 demo 模式，不接真实模型。 |
-| 权限 / 安全 | 是 | Nginx 统一 80 端口入口，数据库/Redis/MinIO 不暴露公网。 |
+| 权限 / 安全 | 是 | Nginx 统一 80/443 入口，数据库/Redis/MinIO 不暴露公网。 |
 | 部署 / 环境变量 | 是 | 新增生产 compose、Nginx 配置、生产 env 示例。 |
 | 文档 | 是 | 新增单服务器部署 runbook。 |
 
@@ -43,7 +43,7 @@
 
 采用单台服务器上的 Docker Compose：
 
-- `nginx` 作为公网入口，负责 80 端口和路径反向代理。
+- `nginx` 作为公网入口，负责 80 跳转 443、HTTPS 终止和路径反向代理。
 - `web` 运行 Next.js 前端。
 - `auth` 运行认证服务。
 - `service` 运行业务 API 和创作调度入口。
@@ -52,7 +52,7 @@
 - `redis` 保存缓存、锁、限流和队列短期状态。
 - `minio` 提供 S3 兼容对象存储。
 
-公网只开放 80、22。PostgreSQL、Redis、MinIO 仅在 Docker 网络内访问。
+公网只开放 80、443、22。PostgreSQL、Redis、MinIO 仅在 Docker 网络内访问。
 
 ## 契约与数据变更
 

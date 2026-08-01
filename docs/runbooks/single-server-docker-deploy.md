@@ -1,6 +1,6 @@
 # 单台服务器 Docker + Nginx 部署
 
-本文记录 MediaForge 改为单台服务器部署的生产方案。当前方案使用 Nginx 统一代理，先只开放 80 端口。
+本文记录 MediaForge 改为单台服务器部署的生产方案。当前方案使用 Nginx 统一代理。没有域名时，可以先使用 HTTPS + IP + 自签名证书，浏览器会提示证书风险，手动继续后即可使用浏览器 WebCrypto。
 
 ## 服务器建议
 
@@ -32,10 +32,10 @@ Redis
 MinIO
 ```
 
-所有浏览器请求走同一个 HTTP 入口：
+所有浏览器请求走同一个 HTTPS 入口：
 
 ```text
-http://146.56.198.214
+https://146.56.198.214
 ```
 
 Nginx 路由：
@@ -51,6 +51,7 @@ Nginx 路由：
 
 ```text
 80/tcp
+443/tcp
 22/tcp
 ```
 
@@ -83,6 +84,18 @@ cd media-forge
 cp infra/docker/.env.prod.example infra/docker/.env.prod
 ```
 
+生成 IP 自签名证书：
+
+```bash
+mkdir -p infra/docker/certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout infra/docker/certs/server.key \
+  -out infra/docker/certs/server.crt \
+  -subj "/CN=146.56.198.214" \
+  -addext "subjectAltName=IP:146.56.198.214"
+chmod 600 infra/docker/certs/server.key
+```
+
 生成 RSA 私钥：
 
 ```bash
@@ -99,7 +112,7 @@ AUTH_PASSWORD_PRIVATE_KEY_PEM=
 修改 `infra/docker/.env.prod`：
 
 ```text
-PUBLIC_ORIGIN=http://146.56.198.214
+PUBLIC_ORIGIN=https://146.56.198.214
 POSTGRES_PASSWORD=强密码
 MINIO_ROOT_PASSWORD=强密码，至少 16 位
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=初始管理员强密码
@@ -140,15 +153,17 @@ bash scripts/deploy-prod.sh
 健康检查：
 
 ```bash
-curl -fsS http://146.56.198.214/auth/password-key
-curl -fsS http://146.56.198.214/health
+curl -fsSk https://146.56.198.214/auth/password-key
+curl -fsSk https://146.56.198.214/health
 ```
 
 浏览器打开：
 
 ```text
-http://146.56.198.214
+https://146.56.198.214
 ```
+
+浏览器首次访问会提示证书不受信任。确认是自己的服务器 IP 后，选择继续访问。
 
 使用 `AUTH_BOOTSTRAP_ADMIN_ACCOUNT` 和 `AUTH_BOOTSTRAP_ADMIN_PASSWORD` 登录。首次登录后按页面提示修改密码。
 
