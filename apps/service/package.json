@@ -12,7 +12,7 @@
     "db:migrate": "tsx src/migrate.ts",
     "worker:dev": "tsx watch src/creation-graph/worker-main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/apps/service/src/main.js",
+    "start": "tsx src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },

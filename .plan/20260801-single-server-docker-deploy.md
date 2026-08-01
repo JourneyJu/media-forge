@@ -72,6 +72,9 @@ allowed_files:
   - .dockerignore
   - .gitignore
   - Dockerfile
+  - apps/auth/package.json
+  - apps/service/package.json
+  - apps/worker/package.json
   - packages/contracts/package.json
   - infra/docker/docker-compose.prod.yml
   - infra/docker/nginx.conf
