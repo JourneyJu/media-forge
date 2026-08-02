@@ -93,6 +93,7 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_FORCE_PATH_STYLE: "true"
       MODEL_MODE: ${MODEL_MODE:-demo}
+      MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY}
     command: ["pnpm", "--filter", "@mediaforge/service", "start"]
     expose:
       - "4000"
@@ -125,6 +126,7 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_FORCE_PATH_STYLE: "true"
       MODEL_MODE: ${MODEL_MODE:-demo}
+      MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY}
       CREATION_RUN_WORKER_CONCURRENCY: ${CREATION_RUN_WORKER_CONCURRENCY:-2}
     command: ["pnpm", "--filter", "@mediaforge/worker", "start"]
 

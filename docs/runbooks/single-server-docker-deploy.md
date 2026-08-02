@@ -109,6 +109,20 @@ AUTH_JWT_PRIVATE_KEY_PEM=
 AUTH_PASSWORD_PRIVATE_KEY_PEM=
 ```
 
+生成模型配置加密根密钥：
+
+```bash
+openssl rand -base64 32
+```
+
+填入：
+
+```text
+MODEL_CONFIG_ENCRYPTION_KEY=
+```
+
+`MODEL_CONFIG_ENCRYPTION_KEY` 用于加密控制台保存的模型供应商 API Key，不是 DeepSeek 或 OpenAI API Key。该值必须长期固定；如果更换，数据库中已保存的模型连接密钥将无法解密。
+
 修改 `infra/docker/.env.prod`：
 
 ```text
@@ -116,6 +130,7 @@ PUBLIC_ORIGIN=https://146.56.198.214
 POSTGRES_PASSWORD=强密码
 MINIO_ROOT_PASSWORD=强密码，至少 16 位
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=初始管理员强密码
+MODEL_CONFIG_ENCRYPTION_KEY=openssl rand -base64 32 的输出
 ```
 
 不要提交 `infra/docker/.env.prod`。

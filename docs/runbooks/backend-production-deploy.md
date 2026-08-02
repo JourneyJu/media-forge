@@ -112,6 +112,7 @@ S3_ACCESS_KEY=<r2_access_key_id>
 S3_SECRET_KEY=<r2_secret_access_key>
 S3_FORCE_PATH_STYLE=true
 MODEL_MODE=demo
+MODEL_CONFIG_ENCRYPTION_KEY=<32_byte_base64_secret>
 ```
 
 ### mediaforge-worker
@@ -134,6 +135,7 @@ S3_ACCESS_KEY=<r2_access_key_id>
 S3_SECRET_KEY=<r2_secret_access_key>
 S3_FORCE_PATH_STYLE=true
 MODEL_MODE=demo
+MODEL_CONFIG_ENCRYPTION_KEY=<same_32_byte_base64_secret_as_service>
 CREATION_RUN_WORKER_CONCURRENCY=2
 ```
 
@@ -144,9 +146,10 @@ CREATION_RUN_WORKER_CONCURRENCY=2
 ```bash
 openssl genrsa -out auth-jwt-private.pem 2048
 openssl genrsa -out auth-password-private.pem 2048
+openssl rand -base64 32
 ```
 
-粘贴到 Railway 环境变量时，需要把换行转义成 `\n`。不要提交这些文件。
+粘贴到 Railway 环境变量时，RSA 私钥需要把换行转义成 `\n`。`openssl rand -base64 32` 的输出填入 `MODEL_CONFIG_ENCRYPTION_KEY`，用于加密控制台保存的模型供应商 API Key，不是 DeepSeek 或 OpenAI API Key。该值必须长期固定；如果更换，数据库中已保存的模型连接密钥将无法解密。不要提交这些文件。
 
 ## 数据库迁移
 
