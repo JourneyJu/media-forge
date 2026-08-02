@@ -33,6 +33,7 @@ import {
   uploadResource
 } from "./lib/conversations-api";
 import { getMe, logout } from "./lib/auth-api";
+import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
 import { buildWechatPreviewHtml } from "./lib/wechat-preview";
 
 type PreviewMode = "preview" | "source";
@@ -568,6 +569,7 @@ export default function HomePage() {
   const [chat, dispatch] = useReducer(chatReducer, { messages: [], activeRunId: null });
   const assetInputRef = useRef<HTMLInputElement>(null);
   const lastRunEventNoRef = useRef(0);
+  const loadingArtifactIdsRef = useRef(new Set<string>());
   const messageListRef = useRef<HTMLDivElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
@@ -615,6 +617,18 @@ export default function HomePage() {
     if (!chat.activeRunId) return;
 
     const source = createRunEventSource(chat.activeRunId, lastRunEventNoRef.current);
+
+    const loadArtifact = (artifactId: string) => {
+      if (loadingArtifactIdsRef.current.has(artifactId)) return;
+      loadingArtifactIdsRef.current.add(artifactId);
+      void getArtifact(artifactId).then((artifact) => {
+        setResult(artifact.payload);
+        setStatus("预览已更新");
+      }).catch((error) => {
+        loadingArtifactIdsRef.current.delete(artifactId);
+        setStatus(error instanceof Error ? error.message : "产物读取失败");
+      });
+    };
 
     const handleRunEvent = (type: RunEventType, event: MessageEvent<string>) => {
       const eventNo = Number(event.lastEventId);
@@ -690,16 +704,13 @@ export default function HomePage() {
       }
 
       if (type === "artifact.created" && typeof payload.artifactId === "string") {
-        void getArtifact(payload.artifactId).then((artifact) => {
-          setResult(artifact.payload);
-        }).catch((error) => {
-          setStatus(error instanceof Error ? error.message : "产物读取失败");
-        });
+        loadArtifact(payload.artifactId);
         return;
       }
 
       if (type === "run.completed") {
         const artifactId = getString(payload, "artifactId");
+        if (artifactId) loadArtifact(artifactId);
         if (artifactId) {
           dispatch({
             type: "result_notice_added",
@@ -891,14 +902,13 @@ export default function HomePage() {
   }
 
   async function persistFiles(files: File[], source: "upload" | "paste"): Promise<void> {
-    const accepted = files.filter((file) =>
-      ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)
-      && file.size > 0
-      && file.size <= 10 * 1024 * 1024);
-    if (accepted.length !== files.length) setStatus("仅支持不超过 10 MB 的 JPG、PNG、WebP 或 GIF 图片");
+    const accepted = files.filter((file) => isSupportedUploadImage(file) && uploadFileSizeValid(file));
+    if (accepted.length !== files.length) {
+      setStatus(`仅支持 JPG、PNG、WebP 或 GIF；非 GIF 大图会先压缩，原图最大 ${Math.round(imageUploadLimits.maxCompressSourceBytes / 1024 / 1024)} MB`);
+    }
     if (accepted.length === 0) return;
     setBusy(true);
-    setStatus(`正在保存 ${accepted.length} 张图片...`);
+    setStatus(`正在处理 ${accepted.length} 张图片...`);
     try {
       let sessionId = uploadSessionId;
       if (!sessionId) {
@@ -909,7 +919,9 @@ export default function HomePage() {
       const uploaded: ResourceSummary[] = [];
       for (let index = 0; index < accepted.length; index += 3) {
         const batch = accepted.slice(index, index + 3);
-        uploaded.push(...await Promise.all(batch.map((file) => uploadResource(sessionId!, file, source))));
+        const prepared = await Promise.all(batch.map((file) => prepareImageForUpload(file)));
+        setStatus(`正在上传图片 ${Math.min(index + prepared.length, accepted.length)}/${accepted.length}...`);
+        uploaded.push(...await Promise.all(prepared.map((file) => uploadResource(sessionId!, file, source))));
       }
       setAssets((current) => [...current, ...uploaded]);
       setResourcesById((current) => ({
