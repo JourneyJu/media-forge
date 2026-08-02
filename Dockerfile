@@ -7,11 +7,17 @@ RUN corepack enable
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY apps ./apps
-COPY packages ./packages
+COPY apps/auth/package.json ./apps/auth/package.json
+COPY apps/service/package.json ./apps/service/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/worker/package.json ./apps/worker/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
 
 RUN pnpm config set registry https://registry.npmmirror.com
 RUN pnpm install --frozen-lockfile
+
+COPY apps ./apps
+COPY packages ./packages
 
 ARG PACKAGE_FILTER
 ARG NEXT_PUBLIC_AUTH_URL
