@@ -57,4 +57,32 @@ describe("wechat article creation graph", () => {
     expect(result.clarification?.questions[0]?.id).toBe("audience");
     expect(result.finalDocument).toBeUndefined();
   });
+
+  it("does not ask clarification for short revision requests with session memory", async () => {
+    const result = await runWechatArticleGraph({
+      ...baseState("标题更吸引人一点"),
+      memory: {
+        materialSummary: [],
+        userConstraints: ["语气温暖"],
+        lastArtifactId: "artifact_1",
+        draftSummary: {
+          artifactId: "artifact_1",
+          title: "把童年留在镜头里",
+          paragraphCount: 6,
+          sectionTitles: ["自然", "专业", "故事"],
+          keyPoints: ["儿童摄影品牌宣传"]
+        },
+        revisionIntent: {
+          target: "title",
+          instruction: "标题更吸引人一点",
+          createdAt: "2026-08-02T00:00:00.000Z"
+        }
+      }
+    }, {
+      agents: createDemoCreationAgents()
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.finalDocument).toBeDefined();
+  });
 });

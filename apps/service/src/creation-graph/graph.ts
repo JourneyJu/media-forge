@@ -41,6 +41,7 @@ const GraphAnnotation = Annotation.Root({
     default: () => []
   }),
   skillId: Annotation<string>(),
+  memory: Annotation<CreationGraphState["memory"] | undefined>(),
   brief: Annotation<CreativeBrief | undefined>(),
   clarification: Annotation<ClarificationRequest | undefined>(),
   titles: Annotation<TitleCandidates | undefined>(),
@@ -65,8 +66,9 @@ const GraphAnnotation = Annotation.Root({
   status: Annotation<CreationGraphState["status"]>()
 });
 
-function requiresClarification(input: string): boolean {
-  return input.trim().length < 12;
+function requiresClarification(state: CreationGraphState): boolean {
+  if (state.memory?.lastArtifactId) return false;
+  return state.userInput.trim().length < 12;
 }
 
 function selectedTitle(titles: TitleCandidates): string {
@@ -135,7 +137,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
       brief: await agents.buildBrief({
         userInput: state.userInput,
         resourceIds: state.resourceIds,
-        skillId: state.skillId
+        skillId: state.skillId,
+        memory: state.memory
       }),
       status: "running"
     }),
@@ -146,7 +149,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     observer,
     "clarification",
     "信息完整性检查",
-    async (state) => requiresClarification(state.userInput)
+    async (state) => requiresClarification(state)
       ? {
           clarification: {
             reason: "创作主题或目标读者信息不足，继续生成会显著影响文章方向。",
@@ -197,7 +200,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
       draft: await agents.writeDraft({
         brief: requireBrief(state),
         titles: requireTitles(state),
-        outline: requireOutline(state)
+        outline: requireOutline(state),
+        memory: state.memory
       })
     }),
     (update) => `已完成 ${update.draft?.paragraphs.length ?? 0} 个正文段落`
@@ -242,7 +246,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         brief: requireBrief(state),
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
-        report: state.reviewReports.at(-1)!
+        report: state.reviewReports.at(-1)!,
+        memory: state.memory
       }),
       revisionCount: state.revisionCount + 1
     }),

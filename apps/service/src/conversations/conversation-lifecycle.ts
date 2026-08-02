@@ -5,15 +5,21 @@ import type {
   ConversationListItem,
   ConversationMessage,
   ConversationResource,
+  ConversationWorkingMemory,
   CreateConversationTurnRequest,
   CreateConversationTurnResponse,
   CreationRun,
+  CreationRunContext,
   CreationRunJob,
   DeleteConversationResponse,
   GetConversationResponse,
   ListConversationsResponse,
   RenameConversationRequest,
   ResourceSummary
+} from "@mediaforge/contracts";
+import {
+  conversationWorkingMemorySchema,
+  creationRunContextSchema
 } from "@mediaforge/contracts";
 import type { GenerateWechatArticleResponse } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
@@ -154,6 +160,91 @@ function createQueuedRun(conversationId: string, createdAt: string): CreationRun
   };
 }
 
+function clip(value: string, maxLength: number): string {
+  return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function createEmptyMemory(conversationId: string, contextVersion: number): ConversationWorkingMemory {
+  return {
+    conversationId,
+    contextVersion,
+    materialSummary: [],
+    userConstraints: [],
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function normalizeMemory(
+  conversationId: string,
+  contextVersion: number,
+  memory: unknown
+): ConversationWorkingMemory {
+  if (!memory) return createEmptyMemory(conversationId, contextVersion);
+  return conversationWorkingMemorySchema.parse({
+    conversationId,
+    contextVersion,
+    materialSummary: [],
+    userConstraints: [],
+    updatedAt: new Date().toISOString(),
+    ...(typeof memory === "object" ? memory : {})
+  });
+}
+
+function isNewCreationIntent(input: string): boolean {
+  return /重新生成一篇|新主题|换一个主题|另写一篇|从头写/u.test(input);
+}
+
+function revisionTarget(input: string): NonNullable<ConversationWorkingMemory["revisionIntent"]>["target"] {
+  if (/标题|题目/u.test(input)) return "title";
+  if (/结构|提纲|章节|段落顺序/u.test(input)) return "outline";
+  if (/图片|配图|封面|素材/u.test(input)) return "image";
+  if (/语气|风格|口吻|温暖|正式|自然/u.test(input)) return "style";
+  if (/第三段|正文|内容|加上|删掉|补充/u.test(input)) return "body";
+  return "all";
+}
+
+function isRevisionIntent(input: string, memory: ConversationWorkingMemory): boolean {
+  if (!memory.lastArtifactId || isNewCreationIntent(input)) return false;
+  return /改|调整|换|优化|加|删|重写|更|补充|第三段|标题|语气|风格/u.test(input) || input.trim().length <= 40;
+}
+
+function createRunContext(
+  conversationId: string,
+  contextVersion: number,
+  input: {
+    userInput: string;
+    resourceIds: string[];
+    skillId: string;
+    maxSteps: number;
+  },
+  memory: ConversationWorkingMemory
+): CreationRunContext {
+  const revisionIntent = isRevisionIntent(input.userInput, memory)
+    ? {
+        target: revisionTarget(input.userInput),
+        instruction: clip(input.userInput, 1000),
+        createdAt: new Date().toISOString()
+      }
+    : undefined;
+  const memorySnapshot = isNewCreationIntent(input.userInput)
+    ? createEmptyMemory(conversationId, contextVersion)
+    : memory;
+  return creationRunContextSchema.parse({
+    ...input,
+    contextVersion,
+    memory: {
+      brief: memorySnapshot.brief,
+      selectedTitle: memorySnapshot.selectedTitle,
+      outline: memorySnapshot.outline,
+      draftSummary: memorySnapshot.draftSummary,
+      materialSummary: memorySnapshot.materialSummary,
+      userConstraints: memorySnapshot.userConstraints,
+      lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
+      revisionIntent
+    }
+  });
+}
+
 export function createConversationLifecycleService(
   databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/mediaforge"
 ) {
@@ -192,6 +283,19 @@ export function createConversationLifecycleService(
     );
   }
 
+  async function getConversationMemory(
+    client: PoolClient,
+    conversationId: string,
+    contextVersion: number
+  ): Promise<ConversationWorkingMemory> {
+    const result = await client.query<{ memory_json: unknown; context_version: number }>(
+      "select memory_json, context_version from conversation_memories where conversation_id = $1",
+      [conversationId]
+    );
+    const row = result.rows[0];
+    return normalizeMemory(conversationId, row?.context_version ?? contextVersion, row?.memory_json);
+  }
+
   async function insertRun(
     client: PoolClient,
     ownerId: string,
@@ -203,6 +307,18 @@ export function createConversationLifecycleService(
     createdAt: string
   ): Promise<CreationRun> {
     const run = createQueuedRun(conversationId, createdAt);
+    const memory = await getConversationMemory(client, conversationId, contextVersion);
+    const runContext = createRunContext(
+      conversationId,
+      contextVersion,
+      {
+        userInput,
+        resourceIds,
+        skillId: input.layoutSkillId,
+        maxSteps: input.maxSteps
+      },
+      memory
+    );
     const job: CreationRunJob = {
       runId: run.id,
       conversationId,
@@ -237,12 +353,7 @@ export function createConversationLifecycleService(
         job.graphName,
         job.graphVersion,
         contextVersion,
-        JSON.stringify({
-          userInput,
-          resourceIds,
-          skillId: input.layoutSkillId,
-          maxSteps: input.maxSteps
-        }),
+        JSON.stringify(runContext),
         createdAt
       ]
     );

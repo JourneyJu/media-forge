@@ -7,6 +7,7 @@ import {
   titleCandidatesSchema,
   type ArticleDraft,
   type ArticleOutline,
+  type CreationGraphState,
   type CreativeBrief,
   type ImagePlan,
   type ReviewReport,
@@ -21,6 +22,7 @@ interface BriefInput {
   userInput: string;
   resourceIds: string[];
   skillId: string;
+  memory?: CreationGraphState["memory"];
 }
 
 interface TitleInput {
@@ -36,6 +38,7 @@ interface DraftInput {
   brief: CreativeBrief;
   titles: TitleCandidates;
   outline: ArticleOutline;
+  memory?: CreationGraphState["memory"];
 }
 
 interface ImagePlanInput {
@@ -51,6 +54,7 @@ interface ReviewInput {
 
 interface RevisionInput extends ReviewInput {
   report: ReviewReport;
+  memory?: CreationGraphState["memory"];
 }
 
 export interface CreationAgents {
@@ -99,6 +103,18 @@ function inferAudience(input: string): string {
 }
 
 function createDemoBrief(input: BriefInput): CreativeBrief {
+  if (input.memory?.brief && input.userInput.trim().length <= 40) {
+    return creativeBriefSchema.parse({
+      ...input.memory.brief,
+      constraints: [
+        ...input.memory.brief.constraints,
+        input.userInput
+      ].slice(-20),
+      resourceIds: [...new Set([...input.memory.brief.resourceIds, ...input.resourceIds])],
+      skillId: input.skillId
+    });
+  }
+
   const materialRequirements = input.userInput
     .split(/\r?\n/u)
     .map((line) => line.replace(/^\s*\d+[.、]\s*/u, "").trim())
@@ -187,11 +203,15 @@ function createDemoOutline(input: OutlineInput): ArticleOutline {
 function createDemoDraft(input: DraftInput): ArticleDraft {
   const title = selectedTitle(input.titles);
   const audience = input.brief.audience;
+  const revisionInstruction = input.memory?.revisionIntent?.instruction;
+  const revisionLead = revisionInstruction
+    ? `根据本轮修改要求“${clip(revisionInstruction, 80)}”，在保留原有结构的基础上调整表达。`
+    : "";
   return articleDraftSchema.parse({
     title: title.title,
     subtitle: title.subtitle,
     paragraphs: [
-      `孩子长大的速度，常常比我们意识到的更快。今天还会因为一颗糖开心很久，明天就开始有了自己的主意。对${audience}来说，真正舍不得忘记的，往往不是某个标准动作，而是这些带着性格和温度的小瞬间。`,
+      `${revisionLead}孩子长大的速度，常常比我们意识到的更快。今天还会因为一颗糖开心很久，明天就开始有了自己的主意。对${audience}来说，真正舍不得忘记的，往往不是某个标准动作，而是这些带着性格和温度的小瞬间。`,
       "镜头的意义，是让时间稍微慢下来。一个低头摆弄玩具的侧影，一次忍不住的大笑，或者牵着家人时下意识握紧的小手，都比刻意安排的表情更接近孩子本来的样子。",
       "因此，儿童摄影首先需要的不是让孩子配合，而是让拍摄者愿意等待、观察并进入他们的节奏。熟悉之后的放松、玩耍时的专注、和家人互动时的依赖，才会自然地留在画面里。",
       "不同孩子有不同的表达方式。有的明亮活泼，适合轻快的生活场景；有的安静细腻，更适合克制、干净的画面；还有一些家庭，希望把陪伴本身也放进照片，让影像成为一家人的共同记忆。",

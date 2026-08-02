@@ -98,6 +98,16 @@ apps/worker/
 | `render` | WeChat Renderer Agent | 生成微信兼容内容结构和 HTML。 |
 | `artifact` | Artifact Builder | 校验并保存 Artifact 和 ArticleVersion。 |
 
+## 会话记忆输入
+
+Creation Graph 不维护跨会话长期记忆。它只消费 `conversations` 模块在 Run 创建时冻结的 `CreationRunContext`，其中可包含当前会话的 Working Memory 摘要。
+
+Working Memory 可以提供 brief、上一版标题、提纲摘要、素材摘要、用户约束、修改意图和 `lastArtifactId`。Graph 节点必须按职责读取必要片段，不能把完整历史消息或所有上下文字段无差别传给每个 Agent。
+
+当 Run 完成后，Worker 通过 `AgentOutput` 和 `Artifact` 产出可用于更新 Working Memory 的结构化结果。最终公众号正文仍以 `Artifact` / `ArticleDocument` 为事实源，Working Memory 不得替代最终正文。
+
+详细方案见 `docs/specs/013-conversation-session-memory.md`。
+
 ## 状态流
 
 ```text
@@ -185,4 +195,5 @@ POST /runs/:id/clarifications
 
 - 初始规格：`docs/specs/004-langgraph-multi-agent-creation-system.md`
 - 生产化补全规格：`docs/specs/006-langgraph-multi-agent-production-completion.md`
+- 会话级上下文管理规格：`docs/specs/013-conversation-session-memory.md`
 - 当前 L 级计划：`.plan/20260727-langgraph-multi-agent-production-completion.md`

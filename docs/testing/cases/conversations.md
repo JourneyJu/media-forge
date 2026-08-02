@@ -21,3 +21,8 @@
 | CONV-017 | 越权访问 | 用户访问他人 Conversation | 返回 404，不泄露资源存在性。 |
 | CONV-018 | SSE 续传 | 客户端从 `eventNo=2` 重连 | 只补发更大编号事件并继续流式接收，不重复消息。 |
 | CONV-019 | 内容边界 | 完成公众号生成 | 最终文章不包含用户 prompt、任务计划、模型思维链或审阅说明。 |
+| CONV-020 | Working Memory 写入 | 第一轮公众号生成完成 | `conversation_memories` 写入当前 brief、标题摘要、提纲摘要、正文摘要和 `lastArtifactId`。 |
+| CONV-021 | 修改类 Turn | 用户在已有 Artifact 的会话中发送“标题更吸引人一点” | 新 Run 的 `context_json` 包含 Working Memory 和上一版 Artifact 引用，不重新空白生成。 |
+| CONV-022 | RunContext 冻结 | Run 创建后用户立即继续发送另一条消息 | 已创建 Run 的 `graph_runs.context_json` 不变化，后一条消息创建独立上下文版本。 |
+| CONV-023 | 新会话隔离 | 新建 Conversation 后发送创作需求 | 不读取旧 Conversation 的 Working Memory。 |
+| CONV-024 | 删除清理记忆 | 删除包含 Working Memory 的 Conversation | Conversation 聚合清理后，对应 Working Memory 不存在。 |

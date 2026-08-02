@@ -132,6 +132,15 @@ DELETE /conversations/:id
 - 测试方案：`docs/testing/plans/conversations.md`
 - 测试用例：`docs/testing/cases/conversations.md`
 - 生命周期规格：`docs/specs/007-conversation-lifecycle-and-resource-ownership.md`
+- 会话级上下文管理规格：`docs/specs/013-conversation-session-memory.md`
+
+## 会话级上下文管理
+
+`Conversation` 是公众号创作的上下文边界。系统不保存跨会话长期记忆；同一会话内通过 Working Memory 管理当前创作状态，并在创建 Run 时冻结为 `graph_runs.context_json`。
+
+会话工作记忆包含当前 brief、标题、提纲摘要、素材摘要、用户约束、修改意图和最新 `Artifact` 引用。原始消息、资源绑定和 Artifact 仍然是 PostgreSQL 中的事实源，Working Memory 只是面向后续 Run 的可更新摘要。
+
+后续用户 Turn 创建 Run 时，`conversations` 模块负责读取 Working Memory、识别 Turn 意图、组装本次 `CreationRunContext`，并保证已经创建的 Run 不受后续消息影响。Conversation 删除时，关联 Working Memory 必须随 Conversation 聚合一起清理。
 
 ## 风险
 

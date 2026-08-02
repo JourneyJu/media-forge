@@ -49,6 +49,7 @@ function createInitialState(job: CreationRunJob, context: {
   userInput: string;
   resourceIds: string[];
   skillId: string;
+  memory?: CreationGraphState["memory"];
 }): CreationGraphState {
   return {
     workspaceId: job.workspaceId,
@@ -57,6 +58,7 @@ function createInitialState(job: CreationRunJob, context: {
     userInput: context.userInput,
     resourceIds: context.resourceIds,
     skillId: context.skillId,
+    memory: context.memory,
     reviewReports: [],
     revisionCount: 0,
     maxRevisionCount: 2,
@@ -193,6 +195,12 @@ export async function processCreationRunJob(
       process.env.MODEL_MODE === "demo" ? "local-demo" : "gateway"
     );
     const artifact = await persistence.saveArtifact(payload.conversationId, payload.runId, response);
+    await persistence.updateConversationMemoryFromGraphResult(
+      payload.conversationId,
+      payload.contextVersion,
+      result,
+      artifact
+    );
     await persistence.appendEvent(payload.runId, "artifact.created", {
       artifactId: artifact.id,
       artifactType: artifact.type,

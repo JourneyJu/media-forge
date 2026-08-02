@@ -45,6 +45,7 @@ apps/web
 17. Conversation 是消息、资源、Run、Artifact、Article 和对象快照的删除聚合根。
 18. 模型连接、模型能力和默认路由以 PostgreSQL 为唯一事实源，业务模型不从环境变量读取。
 19. 生成次数和真实模型调用分别记账，token 只采用供应商返回值。
+20. 公众号创作不建立跨会话长期记忆；同一 Conversation 内使用 Working Memory 管理会话级创作状态，并在 Run 创建时冻结到 `graph_runs.context_json`。
 
 ## 当前实现状态
 
@@ -79,6 +80,8 @@ apps/web
 
 - `Conversation` 是用户可见创作空间、历史记录和当前创作上下文边界。
 - 首次 Turn 原子创建 Conversation、用户 Message、资源关系、Run 和 dispatch outbox。
+- 会话级 Working Memory 只保存当前 Conversation 的创作状态摘要，不跨 Conversation 共享。
+- Run 创建时从 Working Memory 生成冻结 `RunContext`；Run 执行中后续用户消息不得改变该 Run 的上下文。
 - 资源在 Conversation 创建前通过 `UploadSession` 暂存到 PostgreSQL 和 MinIO / S3。
 - `last_interaction_at` 只在用户 Turn 成功后更新，Worker 和 AI 输出不得改变历史排序。
 - Conversation 删除通过删除 Outbox 清理完整聚合和对象存储。
@@ -87,7 +90,7 @@ apps/web
 - `ArticleVersion` 是公众号文章可恢复边界。
 - 品牌长期记忆只以摘要方式显式进入当前会话，不产生默认 Conversation。
 
-基础规格见 `docs/specs/002-conversation-first-creation-system.md`；本次生命周期修订以 `docs/specs/007-conversation-lifecycle-and-resource-ownership.md` 为准，实施计划见 `.plan/20260727-conversation-lifecycle-resource-ownership.md`。
+基础规格见 `docs/specs/002-conversation-first-creation-system.md`；本次生命周期修订以 `docs/specs/007-conversation-lifecycle-and-resource-ownership.md` 为准。会话级上下文管理目标方案见 `docs/specs/013-conversation-session-memory.md`。实施计划见 `.plan/20260727-conversation-lifecycle-resource-ownership.md`。
 
 ## 微信公众号生成主链路
 
@@ -124,7 +127,7 @@ apps/web 在 Conversation 内创建 Run
   → apps/web 更新对话任务卡和手机预览
 ```
 
-PostgreSQL 保存 `conversations`、`conversation_messages`、`message_resources`、`resources`、`runs`、`agent_tasks`、`agent_outputs`、`run_events`、`artifacts` 和文章版本。Redis 只承担队列、锁、重试和短期通知。Prompt 与模型原始输出经脱敏后保存到 MinIO / S3，用于审计和复现。
+PostgreSQL 保存 `conversations`、`conversation_messages`、`message_resources`、`resources`、`conversation_memories`、`runs`、`agent_tasks`、`agent_outputs`、`run_events`、`artifacts` 和文章版本。Redis 只承担队列、锁、重试和短期通知。Prompt 与模型原始输出经脱敏后保存到 MinIO / S3，用于审计和复现。
 
 ## 后续演进
 

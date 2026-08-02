@@ -5,7 +5,10 @@ import type {
   Conversation,
   ConversationMessage,
   ConversationResource,
+  ConversationWorkingMemory,
+  CreationGraphState,
   CreationRun,
+  CreationRunContext,
   CreationRunJob,
   CreationRunStatus,
   GenerateWechatArticleResponse,
@@ -13,14 +16,11 @@ import type {
   RunEventType,
   SubmitRunClarificationRequest
 } from "@mediaforge/contracts";
+import {
+  conversationWorkingMemorySchema,
+  creationRunContextSchema
+} from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
-
-export interface CreationRunContext {
-  userInput: string;
-  resourceIds: string[];
-  skillId: string;
-  maxSteps: number;
-}
 
 interface RunRow {
   id: string;
@@ -35,6 +35,8 @@ interface RunRow {
   created_at: Date;
   updated_at: Date;
 }
+
+type CreationRunContextInput = Omit<CreationRunContext, "memory"> & Partial<Pick<CreationRunContext, "memory">>;
 
 interface EventRow {
   id: string;
@@ -94,6 +96,140 @@ interface ResourceRow {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function clip(value: string, maxLength: number): string {
+  return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function createEmptyMemory(conversationId: string, contextVersion: number): ConversationWorkingMemory {
+  return {
+    conversationId,
+    contextVersion,
+    materialSummary: [],
+    userConstraints: [],
+    updatedAt: now()
+  };
+}
+
+function normalizeMemory(
+  conversationId: string,
+  contextVersion: number,
+  memory: unknown
+): ConversationWorkingMemory {
+  if (!memory) return createEmptyMemory(conversationId, contextVersion);
+  return conversationWorkingMemorySchema.parse({
+    conversationId,
+    contextVersion,
+    materialSummary: [],
+    userConstraints: [],
+    updatedAt: now(),
+    ...(typeof memory === "object" ? memory : {})
+  });
+}
+
+function inferRevisionTarget(input: string): NonNullable<ConversationWorkingMemory["revisionIntent"]>["target"] {
+  if (/标题|题目/u.test(input)) return "title";
+  if (/结构|提纲|章节|段落顺序/u.test(input)) return "outline";
+  if (/图片|配图|封面|素材/u.test(input)) return "image";
+  if (/语气|风格|口吻|温暖|正式|自然/u.test(input)) return "style";
+  if (/第三段|正文|内容|加上|删掉|补充/u.test(input)) return "body";
+  return "all";
+}
+
+function isNewCreationIntent(input: string): boolean {
+  return /重新生成一篇|新主题|换一个主题|另写一篇|从头写/u.test(input);
+}
+
+function isRevisionIntent(input: string, memory: ConversationWorkingMemory): boolean {
+  if (!memory.lastArtifactId) return false;
+  if (isNewCreationIntent(input)) return false;
+  return /改|调整|换|优化|加|删|重写|更|补充|第三段|标题|语气|风格/u.test(input) || input.trim().length <= 40;
+}
+
+function createRunContext(
+  conversationId: string,
+  contextVersion: number,
+  input: CreationRunContextInput,
+  memory: ConversationWorkingMemory
+): CreationRunContext {
+  const revisionIntent = isRevisionIntent(input.userInput, memory)
+    ? {
+        target: inferRevisionTarget(input.userInput),
+        instruction: clip(input.userInput, 1000),
+        createdAt: now()
+      }
+    : undefined;
+  const memorySnapshot = isNewCreationIntent(input.userInput)
+    ? createEmptyMemory(conversationId, contextVersion)
+    : memory;
+
+  return creationRunContextSchema.parse({
+    ...input,
+    contextVersion,
+    memory: {
+      brief: memorySnapshot.brief,
+      selectedTitle: memorySnapshot.selectedTitle,
+      outline: memorySnapshot.outline,
+      draftSummary: memorySnapshot.draftSummary,
+      materialSummary: memorySnapshot.materialSummary,
+      userConstraints: memorySnapshot.userConstraints,
+      lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
+      revisionIntent
+    }
+  });
+}
+
+function selectedTitleFromState(state: CreationGraphState): ConversationWorkingMemory["selectedTitle"] {
+  const selected = state.titles?.items.find((item) => item.id === state.titles?.selectedId);
+  if (!selected) return undefined;
+  return {
+    id: selected.id,
+    title: selected.title,
+    subtitle: selected.subtitle,
+    angle: selected.angle
+  };
+}
+
+function memoryFromGraphResult(
+  conversationId: string,
+  contextVersion: number,
+  previous: ConversationWorkingMemory,
+  state: CreationGraphState,
+  artifact: Artifact
+): ConversationWorkingMemory {
+  const sectionTitles = state.outline?.sections.map((section) => section.title) ?? previous.outline?.sectionTitles ?? [];
+  return conversationWorkingMemorySchema.parse({
+    conversationId,
+    contextVersion,
+    brief: state.brief ?? previous.brief,
+    selectedTitle: selectedTitleFromState(state) ?? previous.selectedTitle,
+    outline: state.outline
+      ? {
+          title: state.outline.title,
+          subtitle: state.outline.subtitle,
+          sectionTitles,
+          openingHook: state.outline.openingHook,
+          callToAction: state.outline.callToAction
+        }
+      : previous.outline,
+    draftSummary: state.draft
+      ? {
+          artifactId: artifact.id,
+          title: state.draft.title,
+          paragraphCount: state.draft.paragraphs.length,
+          sectionTitles,
+          keyPoints: state.draft.paragraphs.slice(0, 6).map((paragraph) => clip(paragraph, 120)),
+          tone: state.brief?.tone ?? previous.draftSummary?.tone,
+          audience: state.brief?.audience ?? previous.draftSummary?.audience
+        }
+      : previous.draftSummary,
+    materialSummary: previous.materialSummary,
+    userConstraints: previous.userConstraints,
+    revisionIntent: undefined,
+    lastArtifactId: artifact.id,
+    updatedAt: now()
+  });
 }
 
 function toRun(row: RunRow, artifact?: Artifact): CreationRun {
@@ -221,6 +357,35 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
     return event;
   }
 
+  async function getConversationMemoryWithClient(
+    client: PoolClient,
+    conversationId: string,
+    contextVersion: number
+  ): Promise<ConversationWorkingMemory> {
+    const result = await client.query<{ memory_json: unknown; context_version: number }>(
+      "select memory_json, context_version from conversation_memories where conversation_id = $1",
+      [conversationId]
+    );
+    const row = result.rows[0];
+    return normalizeMemory(conversationId, row?.context_version ?? contextVersion, row?.memory_json);
+  }
+
+  async function upsertConversationMemoryWithClient(
+    client: PoolClient,
+    memory: ConversationWorkingMemory
+  ): Promise<void> {
+    await client.query(
+      `insert into conversation_memories
+        (conversation_id, context_version, memory_json, created_at, updated_at)
+       values ($1, $2, $3, now(), now())
+       on conflict (conversation_id) do update set
+         context_version = excluded.context_version,
+         memory_json = excluded.memory_json,
+         updated_at = now()`,
+      [memory.conversationId, memory.contextVersion, JSON.stringify(memory)]
+    );
+  }
+
   return {
     async close(): Promise<void> {
       await pool.end();
@@ -332,8 +497,15 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
       });
     },
 
-    async createQueuedRun(run: CreationRun, context: CreationRunContext, job: CreationRunJob): Promise<void> {
+    async createQueuedRun(run: CreationRun, context: CreationRunContextInput, job: CreationRunJob): Promise<void> {
       await withTransaction(async (client) => {
+        const memory = await getConversationMemoryWithClient(client, run.conversationId, job.contextVersion);
+        const runContext = createRunContext(
+          run.conversationId,
+          job.contextVersion,
+          context,
+          memory
+        );
         await client.query(
           `insert into runs
             (id, conversation_id, type, status, current_step, lock_version, plan_json, steps_json, created_at, updated_at)
@@ -361,7 +533,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
             job.graphName,
             job.graphVersion,
             job.contextVersion,
-            JSON.stringify(context),
+            JSON.stringify(runContext),
             "queued",
             run.createdAt,
             run.updatedAt
@@ -382,12 +554,12 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
     },
 
     async getRunContext(runId: string): Promise<CreationRunContext> {
-      const result = await pool.query<{ context_json: CreationRunContext }>(
+      const result = await pool.query<{ context_json: unknown }>(
         "select context_json from graph_runs where run_id = $1",
         [runId]
       );
       if (!result.rows[0]) throw new Error("RUN_CONTEXT_NOT_FOUND");
-      return result.rows[0].context_json;
+      return creationRunContextSchema.parse(result.rows[0].context_json);
     },
 
     async getRun(runId: string): Promise<CreationRun | undefined> {
@@ -453,13 +625,14 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
           graph_name: CreationRunJob["graphName"];
           graph_version: string;
           context_version: number;
-          context_json: CreationRunContext;
+          context_json: unknown;
         }>(
           "select graph_name, graph_version, context_version, context_json from graph_runs where run_id = $1 for update",
           [runId]
         );
         const graphRun = graphResult.rows[0];
         if (!graphRun) throw new Error("RUN_CONTEXT_NOT_FOUND");
+        const graphContext = creationRunContextSchema.parse(graphRun.context_json);
 
         const clarificationText = input.answers
           .map((answer) => `${answer.questionId}: ${answer.value}`)
@@ -478,10 +651,32 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
           [run.conversation_id]
         );
         const nextContext: CreationRunContext = {
-          ...graphRun.context_json,
-          userInput: `${graphRun.context_json.userInput}\n\n补充信息：\n${clarificationText}`
+          ...graphContext,
+          userInput: `${graphContext.userInput}\n\n补充信息：\n${clarificationText}`,
+          memory: {
+            ...graphContext.memory,
+            userConstraints: [
+              ...graphContext.memory.userConstraints,
+              clip(clarificationText, 500)
+            ],
+            revisionIntent: {
+              target: "all",
+              instruction: clip(clarificationText, 1000),
+              createdAt: now()
+            }
+          }
         };
         const nextContextVersion = graphRun.context_version + 1;
+        const nextMemory = normalizeMemory(
+          run.conversation_id,
+          nextContextVersion,
+          {
+            ...graphContext.memory,
+            userConstraints: nextContext.memory.userConstraints,
+            revisionIntent: nextContext.memory.revisionIntent,
+            updatedAt: now()
+          }
+        );
         const nextJob: CreationRunJob = {
           runId,
           conversationId: run.conversation_id,
@@ -501,6 +696,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
            where run_id = $1`,
           [runId, nextContextVersion, JSON.stringify(nextContext)]
         );
+        await upsertConversationMemoryWithClient(client, nextMemory);
         await client.query(
           `update runs
            set status = 'queued', current_step = 'brief', waiting_for_json = null,
@@ -617,6 +813,31 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
         ]
       );
       return (await this.getArtifactByRun(runId)) ?? artifact;
+    },
+
+    async updateConversationMemoryFromGraphResult(
+      conversationId: string,
+      contextVersion: number,
+      state: CreationGraphState,
+      artifact: Artifact
+    ): Promise<void> {
+      await withTransaction(async (client) => {
+        const previous = await getConversationMemoryWithClient(client, conversationId, contextVersion);
+        const next = memoryFromGraphResult(conversationId, contextVersion, previous, state, artifact);
+        await upsertConversationMemoryWithClient(client, next);
+      });
+    },
+
+    async getConversationMemory(
+      conversationId: string,
+      contextVersion = 0
+    ): Promise<ConversationWorkingMemory> {
+      const client = await pool.connect();
+      try {
+        return getConversationMemoryWithClient(client, conversationId, contextVersion);
+      } finally {
+        client.release();
+      }
     },
 
     async getArtifactByRun(runId: string): Promise<Artifact | undefined> {

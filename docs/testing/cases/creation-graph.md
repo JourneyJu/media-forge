@@ -18,6 +18,12 @@
 步骤：创建 Run，由 Worker 消费。  
 期望：Brief Agent 收到当前 Conversation 的真实上下文；`userInput` 和 `resourceIds` 不为空；不读取其他 Conversation。
 
+## CG-002B Worker 读取冻结会话记忆
+
+前置：Conversation 已有 Working Memory 和 latest Artifact。  
+步骤：创建修改类 Run，由 Worker 消费。  
+期望：Worker 只读取该 Run 的 `graph_runs.context_json`；GraphState 包含 Working Memory 摘要和 `lastArtifactId`；不会读取后续新消息覆盖当前 Run。
+
 ## CG-003 任务卡事件流
 
 步骤：订阅 `GET /runs/:id/events`。  
@@ -83,6 +89,12 @@
 
 步骤：Run 执行中刷新页面。  
 期望：恢复对话消息、任务卡当前状态和最新手机预览。
+
+## CG-012A 基于上一版修改
+
+前置：Conversation 已完成一版公众号 Artifact。  
+步骤：用户发送“第三段加上活动时间，语气更温暖”。  
+期望：Writer 或 Revision Agent 基于上一版 ArticleDocument 定向修改；最终 Artifact 保留未要求修改的章节结构，不从空白重新生成。
 
 ## CG-013 手机预览边界
 

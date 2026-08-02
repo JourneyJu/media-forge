@@ -172,6 +172,80 @@ export const artifactValidationResultSchema = z.object({
 export type ReviewReport = z.infer<typeof reviewReportSchema>;
 export type ArtifactValidationResult = z.infer<typeof artifactValidationResultSchema>;
 
+export const conversationMaterialSummarySchema = z.object({
+  resourceId: z.string().trim().min(1),
+  type: z.enum(["image", "document", "link", "unknown"]),
+  description: z.string().trim().min(1).max(1000),
+  ocrText: z.string().trim().max(4000).optional(),
+  suggestedUsage: z.string().trim().max(500).optional(),
+  quality: z.enum(["high", "medium", "low"]).optional()
+});
+
+export const conversationWorkingMemorySchema = z.object({
+  conversationId: z.string().trim().min(1),
+  contextVersion: z.number().int().min(0),
+  brief: creativeBriefSchema.optional(),
+  selectedTitle: z.object({
+    id: z.string().trim().min(1),
+    title: z.string().trim().min(1).max(64),
+    subtitle: z.string().trim().max(100).optional(),
+    angle: z.string().trim().max(100).optional()
+  }).optional(),
+  outline: z.object({
+    title: z.string().trim().min(1).max(64),
+    subtitle: z.string().trim().max(100).optional(),
+    sectionTitles: z.array(z.string().trim().min(1).max(100)).max(10),
+    openingHook: z.string().trim().max(300).optional(),
+    callToAction: z.string().trim().max(300).optional()
+  }).optional(),
+  draftSummary: z.object({
+    artifactId: z.string().trim().min(1).optional(),
+    title: z.string().trim().min(1).max(64),
+    paragraphCount: z.number().int().min(0).max(100),
+    sectionTitles: z.array(z.string().trim().min(1).max(100)).max(10),
+    keyPoints: z.array(z.string().trim().min(1).max(300)).max(12),
+    tone: z.string().trim().max(40).optional(),
+    audience: z.string().trim().max(200).optional()
+  }).optional(),
+  materialSummary: z.array(conversationMaterialSummarySchema).max(50).default([]),
+  userConstraints: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
+  revisionIntent: z.object({
+    target: z.enum(["title", "outline", "body", "image", "style", "all"]).optional(),
+    instruction: z.string().trim().min(1).max(1000),
+    createdAt: z.string().trim().min(1)
+  }).optional(),
+  lastArtifactId: z.string().trim().min(1).optional(),
+  updatedAt: z.string().trim().min(1)
+});
+
+export type ConversationMaterialSummary = z.infer<typeof conversationMaterialSummarySchema>;
+export type ConversationWorkingMemory = z.infer<typeof conversationWorkingMemorySchema>;
+
+export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pick({
+  brief: true,
+  selectedTitle: true,
+  outline: true,
+  draftSummary: true,
+  materialSummary: true,
+  userConstraints: true,
+  revisionIntent: true,
+  lastArtifactId: true
+});
+
+export const creationRunContextSchema = z.object({
+  userInput: z.string().trim().min(1),
+  resourceIds: z.array(z.string().trim().min(1)).max(100),
+  skillId: z.string().trim().min(1),
+  maxSteps: z.number().int().min(1).max(100),
+  contextVersion: z.number().int().min(1).optional(),
+  memory: creationRunContextMemorySchema.default({
+    materialSummary: [],
+    userConstraints: []
+  })
+});
+
+export type CreationRunContext = z.infer<typeof creationRunContextSchema>;
+
 export interface CreationGraphState {
   workspaceId: string;
   conversationId: string;
@@ -179,6 +253,7 @@ export interface CreationGraphState {
   userInput: string;
   resourceIds: string[];
   skillId: string;
+  memory?: CreationRunContext["memory"];
   brief?: CreativeBrief;
   clarification?: ClarificationRequest;
   titles?: TitleCandidates;

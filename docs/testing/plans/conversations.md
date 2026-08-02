@@ -21,6 +21,7 @@
 - Run / outbox 写入失败时整个事务回滚，不留下空 Conversation。
 - Resource 校验失败时不创建 Conversation，staged Resource 保持可重试。
 - 后续 Turn 成功后 Message、Run、contextVersion 和 lastInteractionAt 一致提交。
+- 后续 Turn 创建 Run 时读取 Working Memory，并将本次上下文冻结到 `graph_runs.context_json`。
 - 并发重复首次 Turn 只创建一个 Conversation。
 
 ## 历史与恢复测试
@@ -31,6 +32,16 @@
 - 历史 Conversation 再次发送后移动到第一条。
 - Assistant、RunEvent、Artifact 和 Worker 状态更新不改变排序。
 - `GET /conversations/:id` 恢复 Message 及其 Resources、active Run 和 Artifact。
+- 页面刷新后同一 Conversation 的 Working Memory 可恢复，不依赖前端内存。
+
+## 会话记忆测试
+
+- 第一轮生成完成后，Working Memory 写入 brief、标题、提纲摘要、正文摘要和 `lastArtifactId`。
+- 修改类 Turn 能识别 `revise_existing`，并在 RunContext 中包含上一版 Artifact 引用。
+- 新主题 Turn 能识别 `new_creation`，避免错误沿用上一版正文。
+- RunContext 创建后保持冻结，后续用户消息不影响正在执行的 Run。
+- 新建 Conversation 不继承旧 Conversation 的 Working Memory。
+- Conversation 删除时清理对应 Working Memory。
 
 ## SSE 与多 Agent 回归
 

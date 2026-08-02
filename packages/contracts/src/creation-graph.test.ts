@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   creationRunJobSchema,
+  creationRunContextSchema,
+  conversationWorkingMemorySchema,
   creativeBriefSchema,
   titleCandidatesSchema
 } from "./creation-graph";
@@ -55,5 +57,42 @@ describe("creation graph contracts", () => {
       selectedId: "missing",
       selectionReason: "综合评分最高"
     })).toThrow();
+  });
+
+  it("defaults missing run context memory for older graph runs", () => {
+    const context = creationRunContextSchema.parse({
+      userInput: "写一篇公众号文章，介绍本周活动。",
+      resourceIds: [],
+      skillId: "auto",
+      maxSteps: 12
+    });
+
+    expect(context.memory.materialSummary).toEqual([]);
+    expect(context.memory.userConstraints).toEqual([]);
+  });
+
+  it("validates conversation scoped working memory", () => {
+    const memory = conversationWorkingMemorySchema.parse({
+      conversationId: "conversation_1",
+      contextVersion: 2,
+      selectedTitle: {
+        id: "story",
+        title: "把童年留在镜头里",
+        angle: "成长故事"
+      },
+      materialSummary: [{
+        resourceId: "resource_1",
+        type: "image",
+        description: "儿童摄影样片",
+        quality: "high"
+      }],
+      userConstraints: ["语气温暖"],
+      lastArtifactId: "artifact_1",
+      updatedAt: new Date("2026-08-02T00:00:00.000Z").toISOString()
+    });
+
+    expect(memory.conversationId).toBe("conversation_1");
+    expect(memory.materialSummary[0]?.resourceId).toBe("resource_1");
+    expect(memory.lastArtifactId).toBe("artifact_1");
   });
 });

@@ -24,6 +24,7 @@
 | `workspaces` | 过渡期品牌上下文配置，不是用户历史会话 | `docs/modules/workspaces/README.md` |
 | `conversations` | 创作会话，当前创作上下文边界 | `docs/modules/conversations/README.md` |
 | `conversation_messages` | 会话内用户和系统可展示消息 | `docs/modules/conversations/README.md` |
+| `conversation_memories` | 规划中的会话级 Working Memory；当前 Conversation 的创作状态摘要 | `docs/modules/conversations/README.md` |
 | `upload_sessions` | Conversation 创建前的用户级资源暂存会话 | `docs/modules/assets/README.md` |
 | `resources` | 上传资源元数据、对象 key、暂存与绑定状态 | `docs/modules/assets/README.md` |
 | `message_resources` | 消息与资源不可变绑定关系 | `docs/modules/conversations/README.md` |
@@ -175,6 +176,25 @@ refresh token 明文只返回给客户端一次，数据库只保存 hash。检�
 
 消息只追加，不提供消息级 UPDATE 或 DELETE。
 
+### `conversation_memories`
+
+目标表。保存同一 Conversation 内的工作记忆摘要，不保存跨会话长期记忆。
+
+| 字段 | 说明 |
+| --- | --- |
+| `conversation_id` | Conversation ID，主键，随 Conversation 删除 |
+| `context_version` | Working Memory 对应的会话上下文版本 |
+| `memory_json` | 当前 brief、标题、提纲摘要、素材摘要、用户约束、修改意图和最新 Artifact 引用 |
+| `created_at` / `updated_at` | 生命周期时间 |
+
+约束：
+
+- `memory_json` 不替代 `conversation_messages`、`resources` 或 `artifacts` 等原始事实。
+- 不允许跨 Conversation 共享 Working Memory。
+- 创建 Run 时可读取 Working Memory 并冻结到 `graph_runs.context_json`。
+- Run 创建后，后续用户 Turn 不得修改该 Run 已冻结的 `context_json`。
+- Conversation 删除时必须随聚合清理。
+
 ### `upload_sessions`
 
 | 字段 | 说明 |
@@ -284,7 +304,7 @@ attached Resource 只能属于一个 Conversation。
 | `run_id` | 产品 Run ID，唯一 |
 | `graph_name` / `graph_version` | Graph 标识和版本 |
 | `context_version` | 本次执行读取的 Conversation 上下文版本 |
-| `context_json` | 版本化执行上下文，用于当前追问恢复 |
+| `context_json` | 版本化执行上下文和会话 Working Memory 快照，用于当前 Run 执行和追问恢复 |
 | `status` | `queued`、`running`、`waiting_clarification`、`completed`、`failed`、`cancelled` |
 | `created_at` / `updated_at` / `completed_at` | 生命周期时间 |
 

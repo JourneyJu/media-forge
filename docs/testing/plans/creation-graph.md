@@ -11,6 +11,7 @@
 - Run 创建与队列入队。
 - Redis、Worker 和 Model Gateway 健康检查。
 - Worker 从 PostgreSQL 读取真实 Conversation 上下文。
+- Worker 从冻结 RunContext 读取会话 Working Memory 摘要。
 - Worker 消费任务并执行 LangGraph。
 - Agent 节点顺序和状态转换。
 - 追问、恢复和幂等。
@@ -56,6 +57,7 @@
 - 手机预览内容不含过程信息。
 - 标题来自候选集合，不等于用户原始输入。
 - Worker 读取的是当前 Conversation 上下文。
+- 修改类请求基于 `lastArtifactId` 和 Working Memory 处理，不从空白上下文重新生成。
 
 ### 信息不足追问
 
@@ -138,3 +140,4 @@ Writer Agent 抛错
 - 队列不可用时 Run 卡在 queued。
 - 自动 Demo 回退掩盖模型配置错误。
 - 原始用户提示词被当作 `subject`、标题或正文。
+- Working Memory 被当作最终正文事实源，覆盖 Artifact / ArticleDocument。
