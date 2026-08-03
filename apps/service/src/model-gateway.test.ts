@@ -79,4 +79,36 @@ describe("generateStructuredJsonWithGateway", () => {
     const retryRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(retryRequest.messages.at(-1).content).toContain("items");
   });
+
+  it("streams reasoning while buffering structured content", async () => {
+    const stream = [
+      'data: {"id":"request_stream","choices":[{"delta":{"reasoning_content":"正在分析素材"}}]}',
+      'data: {"choices":[{"delta":{"content":"{\\"items\\":"}}]}',
+      'data: {"choices":[{"delta":{"content":"[]}"}}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":6,"total_tokens":18}}',
+      "data: [DONE]"
+    ].join("\n\n");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" }
+    }));
+    const onProgress = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateStructuredJsonWithGateway(config, {
+      agentName: "MaterialAgent",
+      systemPrompt: "Analyze materials.",
+      outputContract: '{"items":[]}',
+      input: { resourceIds: [] },
+      schema: z.object({ items: z.array(z.string()) }),
+      onProgress
+    });
+
+    expect(result).toEqual({ items: [] });
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      type: "reasoning",
+      delta: "正在分析素材"
+    }));
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ phase: "validating" }));
+  });
 });

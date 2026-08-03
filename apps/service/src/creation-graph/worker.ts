@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Worker, type Job } from "bullmq";
 import type {
+  AgentProgressPhase,
   AgentOutputType,
   CreationGraphState,
   CreationRunJob,
@@ -16,6 +17,7 @@ import { creationRunQueueName, getRedisUrl, parseRedisConnection } from "./queue
 import { adminConsole } from "../admin-console";
 import { createResourceService } from "../assets/resource-service";
 import { analyzeAsset } from "../vision-gateway";
+import type { ModelGatewayProgressEvent } from "../model-gateway";
 
 interface VisibleStep {
   id: string;
@@ -52,6 +54,146 @@ const outputKeyByNode: Partial<Record<string, keyof CreationGraphState>> = {
   review: "reviewReports",
   artifact: "artifactValidation"
 };
+
+const agentNameByNode: Record<string, string> = {
+  material: "MaterialAgent",
+  brief: "BriefAgent",
+  planner: "ContentPlannerAgent",
+  title: "TitleAgent",
+  outline: "OutlineAgent",
+  writer: "WriterAgent",
+  image_plan: "ImagePlannerAgent",
+  layout: "LayoutAgent",
+  review: "ReviewerAgent",
+  revision: "RevisionAgent",
+  artifact: "ArtifactBuilder"
+};
+
+const reasoningSummaryByAgent: Record<string, string> = {
+  MaterialAgent: "正在识别素材中的人物、场景和可用信息。",
+  BriefAgent: "正在归纳主题、目标读者和表达重点。",
+  ContentPlannerAgent: "正在设计内容主线和段落节奏。",
+  TitleAgent: "正在比较标题方向与读者吸引力。",
+  OutlineAgent: "正在组织章节层次和叙事顺序。",
+  WriterAgent: "正在依据内容计划撰写正文。",
+  ImagePlannerAgent: "正在匹配段落语义与配图位置。",
+  LayoutAgent: "正在优化移动端阅读节奏和版式。",
+  ReviewerAgent: "正在检查内容相关性、深度和完整性。",
+  RevisionAgent: "正在根据审校意见修订内容。",
+  ArtifactBuilder: "正在校验并组装最终公众号内容。"
+};
+
+export function sanitizeAgentProgressText(value: string): string {
+  const blocked = /(system\s*prompt|developer\s*message|api[_\s-]*key|authorization|bearer\s+[a-z0-9._-]+|skill\s*manifest|系统提示词|开发者指令|完整\s*skill)/iu;
+  return value
+    .replace(/sk-[a-z0-9_-]{8,}/giu, "[已隐藏]")
+    .split(/\r?\n/u)
+    .filter((line) => !blocked.test(line))
+    .join(" ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function createAgentProgressReporter(
+  runId: string,
+  persistence: CreationPersistence
+) {
+  let active: {
+    stepId: string;
+    agentName: string;
+    startedAt: number;
+    sequence: number;
+    retryCount: number;
+    phase: AgentProgressPhase;
+    reasoningPublished: boolean;
+  } | null = null;
+  let writeChain = Promise.resolve();
+
+  const append = (type: RunEventType, payload: Record<string, unknown>): Promise<void> => {
+    writeChain = writeChain.then(async () => {
+      await persistence.appendEvent(runId, type, payload);
+    });
+    return writeChain;
+  };
+
+  const payload = (phase: AgentProgressPhase, extra: Record<string, unknown> = {}) => {
+    if (!active) throw new Error("AGENT_PROGRESS_NOT_ACTIVE");
+    active.sequence += 1;
+    return {
+      runId,
+      stepId: active.stepId,
+      agentName: active.agentName,
+      sequence: active.sequence,
+      phase,
+      elapsedMs: Math.max(0, Date.now() - active.startedAt),
+      retryCount: active.retryCount,
+      createdAt: new Date().toISOString(),
+      ...extra
+    };
+  };
+
+  return {
+    async start(stepId: string, agentName: string): Promise<void> {
+      active = {
+        stepId,
+        agentName,
+        startedAt: Date.now(),
+        sequence: 0,
+        retryCount: 0,
+        phase: "thinking",
+        reasoningPublished: false
+      };
+      await append("agent.started", payload("thinking", { summary: "正在准备当前创作任务" }));
+    },
+    async progress(agentName: string, event: ModelGatewayProgressEvent): Promise<void> {
+      if (!active) return;
+      active.agentName = agentName;
+      active.retryCount = event.retryCount;
+      active.phase = event.phase;
+      if (event.type === "reasoning" && event.delta) {
+        if (active.reasoningPublished) return;
+        active.reasoningPublished = true;
+        const delta = reasoningSummaryByAgent[active.agentName] ?? "正在分析当前任务的目标和约束。";
+        await append("agent.reasoning.delta", payload("thinking", { delta }));
+        return;
+      }
+      const summary = event.summary ? sanitizeAgentProgressText(event.summary) : undefined;
+      const type: RunEventType = event.type === "retry"
+        ? "agent.retry.started"
+        : event.phase === "validating"
+          ? "agent.output.validating"
+          : "agent.progress";
+      await append(type, payload(event.phase, summary ? { summary } : {}));
+    },
+    async complete(summary: string): Promise<void> {
+      if (!active) return;
+      await append("agent.reasoning.completed", payload("validating", {
+        summary: sanitizeAgentProgressText(summary)
+      }));
+      await append("agent.completed", payload("validating", {
+        summary: sanitizeAgentProgressText(summary)
+      }));
+      active = null;
+    },
+    async fail(error: unknown): Promise<void> {
+      if (!active) return;
+      await append("agent.failed", payload("validating", {
+        summary: error instanceof Error ? error.message.slice(0, 160) : "Agent 执行失败"
+      }));
+      active = null;
+    },
+    async heartbeat(): Promise<void> {
+      if (!active) return;
+      await append("run.heartbeat", payload(active.phase, {
+        summary: "模型仍在处理"
+      }));
+    },
+    async finish(): Promise<void> {
+      await writeChain;
+    }
+  };
+}
 
 function createInitialState(job: CreationRunJob, context: {
   userInput: string;
@@ -196,6 +338,8 @@ export async function processCreationRunJob(
   const context = await enrichImageMaterials(payload, storedContext);
   const taskIds = new Map<string, string>();
   const visibleSteps: VisibleStep[] = [];
+  const progressReporter = createAgentProgressReporter(payload.runId, persistence);
+  const deadlineAt = Date.now() + Number(process.env.CREATION_RUN_TIMEOUT_MS ?? 600000);
 
   const observer: GraphExecutionObserver = {
     async onNodeStarted(nodeName, title) {
@@ -215,6 +359,7 @@ export async function processCreationRunJob(
         title
       });
       await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+      await progressReporter.start(taskId, agentNameByNode[nodeName] ?? `${nodeName} Agent`);
     },
     async onNodeCompleted(nodeName, title, summary, update) {
       const taskId = taskIds.get(nodeName);
@@ -226,6 +371,7 @@ export async function processCreationRunJob(
         step.status = "completed";
         step.summary = summary;
       }
+      await progressReporter.complete(summary);
       await persistence.appendEvent(payload.runId, "step.completed", {
         stepId: taskId,
         stepType: nodeName,
@@ -249,10 +395,19 @@ export async function processCreationRunJob(
     "我正在把你的需求拆成主题、读者、标题、内容结构和配图任务，多个创作角色会依次完成并相互检查。"
   );
   await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+  const heartbeat = setInterval(() => {
+    void progressReporter.heartbeat().catch(() => undefined);
+  }, Number(process.env.AGENT_HEARTBEAT_INTERVAL_MS ?? 5000));
+  heartbeat.unref();
 
   try {
     const result = await runWechatArticleGraph(createInitialState(payload, context), {
-      agents: createCreationAgents({ userId: payload.workspaceId, runId: payload.runId }),
+      agents: createCreationAgents({
+        userId: payload.workspaceId,
+        runId: payload.runId,
+        deadlineAt,
+        onProgress: (agentName, event) => progressReporter.progress(agentName, event)
+      }),
       observer
     });
 
@@ -303,6 +458,7 @@ export async function processCreationRunJob(
     await adminConsole.finishGeneration(payload.runId, "completed");
     return result;
   } catch (error) {
+    await progressReporter.fail(error);
     const activeTask = [...taskIds.values()].at(-1);
     if (activeTask) await persistence.failAgentTask(activeTask, error);
     await persistence.updateRun(payload.runId, "failed", "failed");
@@ -316,6 +472,9 @@ export async function processCreationRunJob(
       error instanceof Error ? error.message.slice(0, 128) : "CREATION_RUN_FAILED"
     );
     throw error;
+  } finally {
+    clearInterval(heartbeat);
+    await progressReporter.finish();
   }
 }
 

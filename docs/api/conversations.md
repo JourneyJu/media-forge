@@ -151,7 +151,7 @@ GET  /conversations/:conversationId/artifacts
 GET  /artifacts/:artifactId
 ```
 
-SSE 支持 `after` 或 `Last-Event-ID`。事件只包含可展示摘要，不包含模型原始思维链、密钥、完整 prompt 或未脱敏输出。
+SSE 支持 `after` 或 `Last-Event-ID`。事件只包含可展示摘要，不包含模型原始思维链、密钥、完整 prompt、Skill 完整指令或未脱敏输出。规格 016 增加 `agent.*` 和 `run.heartbeat` 事件；旧客户端应忽略未知事件，新客户端按 `event_no + step sequence` 去重。
 
 ## 弃用接口
 

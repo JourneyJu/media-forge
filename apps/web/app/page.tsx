@@ -64,6 +64,18 @@ type ChatAction =
   | { type: "assistant_delta_received"; messageId: string; delta: string }
   | { type: "assistant_message_completed"; messageId: string; content?: string }
   | { type: "task_card_updated"; message: TaskCardChatMessage }
+  | {
+      type: "agent_progress_received";
+      runId: string;
+      stepId: string;
+      eventType: RunEventType;
+      phase?: TaskStepView["phase"];
+      delta?: string;
+      summary?: string;
+      elapsedMs?: number;
+      retryCount?: number;
+      createdAt: string;
+    }
   | { type: "clarification_required"; message: ClarificationChatMessage }
   | { type: "result_notice_added"; message: ResultNoticeChatMessage }
   | { type: "clarification_submitted"; runId: string }
@@ -85,6 +97,15 @@ const runEventTypes: RunEventType[] = [
   "task.card.updated",
   "step.started",
   "step.completed",
+  "agent.started",
+  "agent.progress",
+  "agent.reasoning.delta",
+  "agent.reasoning.completed",
+  "agent.output.validating",
+  "agent.retry.started",
+  "agent.completed",
+  "agent.failed",
+  "run.heartbeat",
   "clarification.required",
   "clarification.submitted",
   "decision.required",
@@ -162,8 +183,49 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     const messages = [...state.messages];
-    messages[existingIndex] = action.message;
+    const existing = messages[existingIndex] as TaskCardChatMessage;
+    const existingSteps = new Map(existing.steps.map((step) => [step.id, step]));
+    messages[existingIndex] = {
+      ...action.message,
+      steps: action.message.steps.map((step) => ({
+        ...existingSteps.get(step.id),
+        ...step
+      }))
+    };
     return { ...state, messages };
+  }
+
+  if (action.type === "agent_progress_received") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.type !== "task" || message.runId !== action.runId) return message;
+        return {
+          ...message,
+          steps: message.steps.map((step) => {
+            if (step.id !== action.stepId) return step;
+            const nextReasoning = action.delta
+              ? `${step.reasoningSummary ?? ""}${action.delta}`.slice(-4000)
+              : step.reasoningSummary;
+            const status = action.eventType === "agent.failed"
+              ? "failed"
+              : action.eventType === "agent.completed"
+                ? "completed"
+                : step.status;
+            return {
+              ...step,
+              status,
+              ...(action.phase ? { phase: action.phase } : {}),
+              ...(action.summary ? { progressText: action.summary } : {}),
+              ...(nextReasoning ? { reasoningSummary: nextReasoning } : {}),
+              ...(action.elapsedMs !== undefined ? { elapsedMs: action.elapsedMs } : {}),
+              ...(action.retryCount !== undefined ? { retryCount: action.retryCount } : {}),
+              lastActivityAt: action.createdAt
+            };
+          })
+        };
+      })
+    };
   }
 
   if (action.type === "clarification_required") {
@@ -196,6 +258,11 @@ function getString(payload: Record<string, unknown>, key: string, fallback = "")
 function getBoolean(payload: Record<string, unknown>, key: string, fallback = false): boolean {
   const value = payload[key];
   return typeof value === "boolean" ? value : fallback;
+}
+
+function getNumber(payload: Record<string, unknown>, key: string): number | undefined {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function getTaskStatus(payload: Record<string, unknown>): TaskCardStatus {
@@ -257,6 +324,20 @@ function getStepMarker(status: TaskStepView["status"]): string {
   if (status === "running") return "•";
   if (status === "failed") return "!";
   return "";
+}
+
+function getAgentPhaseText(phase: TaskStepView["phase"]): string {
+  if (phase === "thinking") return "分析中";
+  if (phase === "generating") return "生成中";
+  if (phase === "validating") return "校验中";
+  if (phase === "retrying") return "修正中";
+  return "等待中";
+}
+
+function formatElapsed(elapsedMs?: number): string {
+  if (elapsedMs === undefined) return "";
+  if (elapsedMs < 1000) return "<1 秒";
+  return `${Math.floor(elapsedMs / 1000)} 秒`;
 }
 
 function formatConversationTime(value: string): string {
@@ -440,6 +521,76 @@ function ClarificationCard({
   );
 }
 
+function AgentTaskCard({ message }: { message: TaskCardChatMessage }) {
+  const [expanded, setExpanded] = useState(!message.collapsed);
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(() => new Set(
+    message.steps.filter((step) => step.status === "running" || step.status === "failed").map((step) => step.id)
+  ));
+  const completed = message.steps.filter((step) => step.status === "completed").length;
+
+  useEffect(() => {
+    if (message.status === "completed") {
+      setExpanded(false);
+      setExpandedSteps(new Set());
+      return;
+    }
+    setExpanded(true);
+    setExpandedSteps((current) => {
+      const next = new Set(current);
+      for (const step of message.steps) {
+        if (step.status === "running" || step.status === "failed") next.add(step.id);
+      }
+      return next;
+    });
+  }, [message.status, message.steps]);
+
+  return (
+    <article className={`task-card ${expanded ? "" : "task-card-collapsed"}`}>
+      <button className="task-card-header" type="button" onClick={() => setExpanded((current) => !current)}>
+        <div>
+          <strong>{message.title}</strong>
+          <span>{getTaskStatusText(message.status)} · {completed}/{message.steps.length} 个步骤</span>
+        </div>
+        <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+      </button>
+      {expanded && (
+        <ol>
+          {message.steps.map((step) => {
+            const stepExpanded = expandedSteps.has(step.id);
+            return (
+              <li key={step.id} className={`task-step task-step-${step.status}`}>
+                <span>{getStepMarker(step.status)}</span>
+                <div>
+                  <button
+                    className="task-step-header"
+                    type="button"
+                    onClick={() => setExpandedSteps((current) => {
+                      const next = new Set(current);
+                      if (next.has(step.id)) next.delete(step.id); else next.add(step.id);
+                      return next;
+                    })}
+                  >
+                    <strong>{step.label}</strong>
+                    <small>{getAgentPhaseText(step.phase)}{step.elapsedMs !== undefined ? ` · ${formatElapsed(step.elapsedMs)}` : ""}</small>
+                  </button>
+                  {step.summary && <p>{step.summary}</p>}
+                  {stepExpanded && (step.progressText || step.reasoningSummary) && (
+                    <div className="agent-progress" aria-live="polite">
+                      {step.progressText && <span>{step.progressText}</span>}
+                      {step.reasoningSummary && <p>{step.reasoningSummary}</p>}
+                      {(step.retryCount ?? 0) > 0 && <small>已自动修正 {step.retryCount} 次</small>}
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </article>
+  );
+}
+
 function MessageList({ messages, resourcesById, onClarificationSubmit }: MessageListProps) {
   if (messages.length === 0) {
     return (
@@ -473,30 +624,7 @@ function MessageList({ messages, resourcesById, onClarificationSubmit }: Message
         }
 
         if (message.type === "task") {
-          const completed = message.steps.filter((step) => step.status === "completed").length;
-          return (
-            <article key={message.id} className={`task-card ${message.collapsed ? "task-card-collapsed" : ""}`}>
-              <div className="task-card-header">
-                <div>
-                  <strong>{message.title}</strong>
-                  <span>{getTaskStatusText(message.status)} · {completed}/{message.steps.length} 个步骤</span>
-                </div>
-              </div>
-              {!message.collapsed && (
-                <ol>
-                  {message.steps.map((step) => (
-                    <li key={step.id} className={`task-step task-step-${step.status}`}>
-                      <span>{getStepMarker(step.status)}</span>
-                      <div>
-                        <strong>{step.label}</strong>
-                        {step.summary && <p>{step.summary}</p>}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </article>
-          );
+          return <AgentTaskCard key={message.id} message={message} />;
         }
 
         if (message.type === "clarification") {
@@ -907,6 +1035,25 @@ export default function HomePage() {
             collapsed: getBoolean(payload, "collapsed", false),
             createdAt: new Date().toISOString()
           }
+        });
+        return;
+      }
+
+      if (type.startsWith("agent.") || type === "run.heartbeat") {
+        const phase = payload.phase;
+        dispatch({
+          type: "agent_progress_received",
+          runId,
+          stepId: getString(payload, "stepId"),
+          eventType: type,
+          ...(phase === "thinking" || phase === "generating" || phase === "validating" || phase === "retrying"
+            ? { phase }
+            : {}),
+          ...(getString(payload, "delta") ? { delta: getString(payload, "delta") } : {}),
+          ...(getString(payload, "summary") ? { summary: getString(payload, "summary") } : {}),
+          ...(getNumber(payload, "elapsedMs") !== undefined ? { elapsedMs: getNumber(payload, "elapsedMs") } : {}),
+          ...(getNumber(payload, "retryCount") !== undefined ? { retryCount: getNumber(payload, "retryCount") } : {}),
+          createdAt: getString(payload, "createdAt", new Date().toISOString())
         });
         return;
       }

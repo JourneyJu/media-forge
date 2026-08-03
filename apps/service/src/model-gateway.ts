@@ -25,6 +25,99 @@ interface ChatCompletionResponse {
   };
 }
 
+export interface ModelGatewayProgressEvent {
+  type: "phase" | "reasoning" | "retry";
+  phase: "thinking" | "generating" | "validating" | "retrying";
+  delta?: string;
+  summary?: string;
+  retryCount: number;
+}
+
+async function readCompletionResponse(
+  response: Response,
+  onProgress: ((event: ModelGatewayProgressEvent) => void | Promise<void>) | undefined,
+  retryCount: number
+): Promise<ChatCompletionResponse> {
+  if (!response.headers.get("content-type")?.includes("text/event-stream")) {
+    return response.json() as Promise<ChatCompletionResponse>;
+  }
+  if (!response.body) throw new Error("MODEL_GATEWAY_STREAM_MISSING");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let requestId: string | undefined;
+  let usage: ChatCompletionResponse["usage"];
+  let generatingReported = false;
+
+  const consumeBlock = async (block: string): Promise<void> => {
+    for (const line of block.split(/\r?\n/u)) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      let chunk: Record<string, unknown>;
+      try {
+        chunk = JSON.parse(data) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (typeof chunk.id === "string") requestId = chunk.id;
+      if (chunk.usage && typeof chunk.usage === "object") {
+        const value = chunk.usage as Record<string, unknown>;
+        usage = {
+          prompt_tokens: typeof value.prompt_tokens === "number" ? value.prompt_tokens : undefined,
+          completion_tokens: typeof value.completion_tokens === "number" ? value.completion_tokens : undefined,
+          total_tokens: typeof value.total_tokens === "number" ? value.total_tokens : undefined
+        };
+      }
+      const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
+      const first = choices[0] as Record<string, unknown> | undefined;
+      const delta = first?.delta && typeof first.delta === "object"
+        ? first.delta as Record<string, unknown>
+        : undefined;
+      const reasoning = typeof delta?.reasoning_content === "string" ? delta.reasoning_content : "";
+      const nextContent = typeof delta?.content === "string" ? delta.content : "";
+      if (reasoning) {
+        await onProgress?.({
+          type: "reasoning",
+          phase: "thinking",
+          delta: reasoning,
+          retryCount
+        });
+      }
+      if (nextContent) {
+        if (!generatingReported) {
+          generatingReported = true;
+          await onProgress?.({
+            type: "phase",
+            phase: "generating",
+            summary: "正在生成结构化结果",
+            retryCount
+          });
+        }
+        content += nextContent;
+      }
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const blocks = buffer.replace(/\r\n/gu, "\n").split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) await consumeBlock(block);
+    if (done) break;
+  }
+  if (buffer.trim()) await consumeBlock(buffer);
+
+  return {
+    id: requestId,
+    usage,
+    choices: [{ message: { content } }]
+  };
+}
+
 /** @deprecated Runtime model configuration is stored in PostgreSQL. */
 export function readModelGatewayConfig(): ModelGatewayConfig | null {
   return null;
@@ -140,6 +233,7 @@ export async function generateStructuredJsonWithGateway<T>(
     input: unknown;
     schema: z.ZodType<T>;
     temperature?: number;
+    onProgress?: (event: ModelGatewayProgressEvent) => void | Promise<void>;
     usage?: {
       userId: string;
       runId?: string;
@@ -174,27 +268,57 @@ export async function generateStructuredJsonWithGateway<T>(
 
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      await options.onProgress?.({
+        type: "phase",
+        phase: "thinking",
+        summary: attempt === 0 ? "正在分析输入和输出要求" : "正在根据校验结果重新组织输出",
+        retryCount: attempt
+      });
+      const requestBody = {
+        model: config.model,
+        temperature: options.temperature ?? 0.5,
+        response_format: { type: "json_object" },
+        messages
+      };
+      let response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${config.apiKey}`,
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          model: config.model,
-          temperature: options.temperature ?? 0.5,
-          response_format: { type: "json_object" },
-          messages
+          ...requestBody,
+          stream: true,
+          stream_options: { include_usage: true }
         }),
         redirect: "error",
         signal: controller.signal
       });
 
+      if ([400, 404, 422].includes(response.status)) {
+        await options.onProgress?.({
+          type: "phase",
+          phase: "generating",
+          summary: "模型不支持流式响应，正在等待完整结果",
+          retryCount: attempt
+        });
+        response = await fetch(`${config.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${config.apiKey}`,
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(requestBody),
+          redirect: "error",
+          signal: controller.signal
+        });
+      }
+
       if (!response.ok) {
         throw new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
       }
 
-      const payload = await response.json() as ChatCompletionResponse;
+      const payload = await readCompletionResponse(response, options.onProgress, attempt);
       providerRequestId = payload.id ?? providerRequestId;
       inputTokens += payload.usage?.prompt_tokens ?? 0;
       outputTokens += payload.usage?.completion_tokens ?? 0;
@@ -205,6 +329,12 @@ export async function generateStructuredJsonWithGateway<T>(
       }
 
       try {
+        await options.onProgress?.({
+          type: "phase",
+          phase: "validating",
+          summary: "正在校验结构和必填字段",
+          retryCount: attempt
+        });
         const parsed = options.schema.parse(JSON.parse(content));
         if (usageId) {
           await adminConsole.finishModelUsage(usageId, {
@@ -219,6 +349,12 @@ export async function generateStructuredJsonWithGateway<T>(
         return parsed;
       } catch (error) {
         if (attempt === 1) throw error;
+        await options.onProgress?.({
+          type: "retry",
+          phase: "retrying",
+          summary: "输出结构未通过校验，正在自动修正",
+          retryCount: attempt + 1
+        });
         const details = error instanceof Error ? error.message.slice(0, 2000) : "JSON does not match the output contract";
         messages.push(
           { role: "assistant", content },

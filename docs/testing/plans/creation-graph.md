@@ -25,6 +25,8 @@
 - MaterialSummary、ContentPlan、结构化 ArticleDraft 和 LayoutPlan。
 - Reviewer 按问题类型回退节点，以及未通过时禁止创建 Artifact。
 - Skill 规则和品牌资源在 Brief、Planner、Writer、Layout、Reviewer 的阶段化应用。
+- 模型流式 reasoning/content 解析、安全摘要、阶段事件和非流式回退。
+- heartbeat、超时、失联 Run 恢复和唯一终态。
 
 ## 不覆盖
 
@@ -41,6 +43,17 @@
 | Integration 测试 | `POST /runs` → queue → worker → events → artifact。 |
 | API 测试 | 追问提交、任务列表、事件流。 |
 | UI 测试 | 对话流、任务卡、手机预览更新。 |
+
+## 流式过程反馈
+
+- Gateway 正确解析跨 chunk 的 `reasoning_content` 和 `content`。
+- `content` 分片不进入前端，流结束后才执行 JSON/Zod 校验。
+- reasoning 摘要经过限长和敏感内容过滤。
+- 不支持 reasoning 或 stream 的模型回退到真实阶段事件，不生成伪思考。
+- Worker 不持久化供应商原始 reasoning，每个 Agent 只发布平台映射的安全业务摘要。
+- 5 秒无有效进度时发送 heartbeat，终态后停止。
+- 首个增量慢、单 Agent 超时、Run 超时和 Worker 中断都产生明确失败或恢复结果。
+- 同一个 Run 只能产生一个业务终态。
 
 ## 关键场景
 
@@ -149,4 +162,7 @@ Writer Agent 抛错
 - 历史用户消息拼接后覆盖最新 Turn 的主题。
 - 新创作自动携带会话内旧素材或旧 LayoutPlan。
 - UI 展示多 Agent 步骤，但底层实际执行 Demo 或固定模板。
+- 推理摘要泄露系统 prompt、Skill 指令、密钥或未脱敏隐私。
+- 增量事件写放大导致 PostgreSQL 压力。
+- 模型流结束但 Run 没有终态，页面静默停止。
 - Layout Agent 输出任意 HTML/CSS 绕过可信 Renderer。

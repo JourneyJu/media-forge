@@ -195,3 +195,39 @@
 步骤：执行完整 Run。
 
 期望：Brief、Planner、Writer、Layout 和 Reviewer 分别收到与职责相关的 Skill 子集；二维码只进入 CTA，Logo 只进入品牌模块；Run 可证明 Skill 已实际应用。
+
+## CG-029 模型推理摘要流式事件
+
+步骤：模拟模型连续返回多个 `reasoning_content` chunk 和最终结构化 `content`。
+
+期望：事件流按顺序产生 `agent.reasoning.delta`；最终 JSON 只在服务端组装并通过 schema 后成为 AgentOutput；浏览器收不到残缺 JSON。
+
+## CG-030 不支持 reasoning 的模型
+
+步骤：模型只返回 `content`，不返回 `reasoning_content`。
+
+期望：Worker 仍产生 `agent.progress`、`agent.output.validating` 和 heartbeat；不伪造模型思考文本，Run 可以正常完成。
+
+## CG-031 推理摘要安全过滤
+
+步骤：模型 reasoning 包含 system prompt 片段、Skill 内部规则、疑似密钥和超长文本。
+
+期望：用户事件不包含敏感内容；单条和单 Agent 总量满足上限；服务日志不记录原文。
+
+## CG-032 heartbeat 与停滞提示
+
+步骤：模型 25 秒没有返回 chunk，但连接仍然有效。
+
+期望：每 5 秒最多产生一次 `run.heartbeat`；前端在 20 秒后显示仍在处理；任务不被误标为完成。
+
+## CG-033 schema 纠错过程
+
+步骤：模型第一次返回非法结构，第二次纠正成功。
+
+期望：产生 `agent.output.validating`、`agent.retry.started` 和最终 `agent.completed`；不展示非法 JSON；用量汇总两次调用。
+
+## CG-034 Worker 中断与唯一终态
+
+步骤：模型调用期间终止 Worker，等待恢复阈值。
+
+期望：Run 被恢复扫描重新入队或标记 failed；最终只有一个终态事件，不永久停在 running。

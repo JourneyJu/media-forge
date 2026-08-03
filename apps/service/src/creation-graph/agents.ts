@@ -21,7 +21,8 @@ import {
 } from "@mediaforge/contracts";
 import {
   generateStructuredJsonWithGateway,
-  resolveModelGatewayConfig
+  resolveModelGatewayConfig,
+  type ModelGatewayProgressEvent
 } from "../model-gateway";
 
 type SelectedSkills = CreationGraphState["selectedSkills"];
@@ -358,12 +359,32 @@ function createDemoAgents(): CreationAgents {
   };
 }
 
-function createGatewayAgents(context: { userId: string; runId?: string }): CreationAgents {
+interface CreationAgentContext {
+  userId: string;
+  runId?: string;
+  deadlineAt?: number;
+  onProgress?: (agentName: string, event: ModelGatewayProgressEvent) => void | Promise<void>;
+}
+
+function createGatewayAgents(context: CreationAgentContext): CreationAgents {
   async function generate<T>(options: Parameters<typeof generateStructuredJsonWithGateway<T>>[1]): Promise<T> {
     const config = await resolveModelGatewayConfig("text_generation");
-    return generateStructuredJsonWithGateway(config, {
+    const remainingMs = context.deadlineAt ? context.deadlineAt - Date.now() : config.timeoutMs;
+    if (remainingMs <= 0) throw new Error("CREATION_RUN_TIMEOUT");
+    return generateStructuredJsonWithGateway({
+      ...config,
+      timeoutMs: Math.min(config.timeoutMs, remainingMs)
+    }, {
       ...options,
-      usage: { ...context, modelConfigId: config.modelConfigId, routeKey: "text_generation" }
+      ...(context.onProgress
+        ? { onProgress: (event: ModelGatewayProgressEvent) => context.onProgress!(options.agentName, event) }
+        : {}),
+      usage: {
+        userId: context.userId,
+        ...(context.runId ? { runId: context.runId } : {}),
+        modelConfigId: config.modelConfigId,
+        routeKey: "text_generation"
+      }
     });
   }
 
@@ -451,7 +472,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
   };
 }
 
-export function createCreationAgents(context: { userId: string; runId?: string } = { userId: "system" }): CreationAgents {
+export function createCreationAgents(context: CreationAgentContext = { userId: "system" }): CreationAgents {
   if (process.env.MODEL_MODE === "demo" || process.env.NODE_ENV === "test") return createDemoAgents();
   return createGatewayAgents(context);
 }

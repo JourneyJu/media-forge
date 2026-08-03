@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createConversationTurnRequestSchema } from "./conversations";
+import {
+  agentProgressPayloadSchema,
+  createConversationTurnRequestSchema,
+  runEventTypeSchema
+} from "./conversations";
 
 describe("conversation lifecycle contracts", () => {
   it("treats the first interaction as a complete turn instead of an empty conversation", () => {
@@ -37,5 +41,24 @@ describe("conversation lifecycle contracts", () => {
         content: "   "
       })
     ).toThrow();
+  });
+
+  it("validates agent progress and heartbeat event contracts", () => {
+    expect(runEventTypeSchema.parse("agent.reasoning.delta")).toBe("agent.reasoning.delta");
+    expect(runEventTypeSchema.parse("run.heartbeat")).toBe("run.heartbeat");
+    const progress = agentProgressPayloadSchema.parse({
+      runId: "run_1",
+      stepId: "task_1",
+      agentName: "WriterAgent",
+      sequence: 2,
+      phase: "generating",
+      delta: "正在组织正文结构",
+      elapsedMs: 3200,
+      retryCount: 0,
+      createdAt: new Date("2026-08-03T00:00:03.200Z").toISOString()
+    });
+
+    expect(progress.sequence).toBe(2);
+    expect(progress.delta).toBe("正在组织正文结构");
   });
 });

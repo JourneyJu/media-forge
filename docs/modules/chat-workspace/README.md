@@ -58,6 +58,10 @@ CreationPage
 - 后续发送调用 `POST /conversations/:id/turns`。
 - Assistant 通过 SSE delta 流式追加，只展示面向用户的文字。
 - 多 Agent 进度在对话列表的任务卡中更新，完成后收起。
+- 当前执行 Agent 自动展开，流式显示安全推理摘要、执行阶段、耗时和最近活动时间。
+- Run 完成后全部 Agent 默认收起；失败 Agent 保持展开并显示失败阶段。
+- 20 秒没有新进度时显示“模型仍在处理”，不能把 SSE 暂时无事件误判为完成。
+- 只有 `run.completed`、`run.failed`、`cancelled` 或 `waiting_clarification` 可以结束当前 Run UI 状态。
 - 信息不足时出现追问卡，不要求用户确认内部计划。
 - 右侧手机预览只读取 Artifact / ArticleVersion。
 
@@ -96,7 +100,7 @@ type ChatState = {
 
 ## 内容边界
 
-允许 Assistant 消息包含可理解的进度和结果说明。禁止包含模型思维链、内部 prompt、工具参数、执行计划原文或审阅 Agent 内部报告。最终文章不得包含用户 prompt 或 AI 过程文本。
+允许 Assistant 消息包含可理解的进度和结果说明。Agent 过程面板可以显示经脱敏和限长的推理摘要，但禁止包含模型原始思维链、内部 prompt、Skill 完整指令、工具参数、执行计划原文或审阅 Agent 内部报告。最终文章不得包含用户 prompt 或 AI 过程文本。
 
 ## API 与测试
 

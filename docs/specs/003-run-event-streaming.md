@@ -1,5 +1,7 @@
 # 规格：Run 事件流与流式创作反馈
 
+> 演进说明：本文定义第一阶段 RunEvent + SSE 基础能力。模型调用期间的安全推理摘要、Agent 增量、heartbeat、超时和自动折叠由 `docs/specs/016-streaming-agent-progress.md` 扩展；最终文章仍只以 Artifact / ArticleVersion 为事实源。
+
 ## 背景
 
 当前 conversation-first 后端已经将创作建模为 `Conversation → Run → Artifact`。如果继续使用同步请求返回完整结果，用户只能看到“等待中”和“完成后结果”，无法获得计划执行过程中的实时反馈。公众号创作更适合按任务阶段流式展示，而不是直接做 token 级聊天流。

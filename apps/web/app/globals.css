@@ -1653,10 +1653,22 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 
 .task-card-header {
+  width: 100%;
+  padding: 0;
+  border: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-card-header > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .task-card-header strong,
@@ -1713,6 +1725,56 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .task-step p {
   display: block;
   margin: 0;
+}
+
+.task-step-header {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-step-header small {
+  flex: 0 0 auto;
+  color: var(--mint-dark);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.agent-progress {
+  margin-top: 8px;
+  padding: 6px 0 4px 10px;
+  border-left: 2px solid rgba(33, 184, 148, .3);
+}
+
+.agent-progress span,
+.agent-progress small {
+  display: block;
+  color: var(--mint-dark);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.agent-progress p {
+  max-height: 112px;
+  overflow: auto;
+  margin-top: 4px;
+  color: #46534e;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.agent-progress small {
+  margin-top: 5px;
+  color: var(--coral-dark);
 }
 
 .task-step p {

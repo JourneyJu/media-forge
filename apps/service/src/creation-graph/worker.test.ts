@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import type { CreationRunContext, CreationRunJob } from "@mediaforge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { enrichImageMaterials } from "./worker";
+import { enrichImageMaterials, sanitizeAgentProgressText } from "./worker";
 
 const job: CreationRunJob = {
   runId: "run_1",
@@ -87,5 +87,22 @@ describe("creation worker image material enrichment", () => {
       description: "素材“舞蹈现场.png”（image/png，来源：upload）",
       quality: "low"
     });
+  });
+});
+
+describe("agent progress safety", () => {
+  it("removes sensitive lines and limits visible progress", () => {
+    const result = sanitizeAgentProgressText([
+      "正在比较文章结构",
+      "system prompt: secret instructions",
+      "API_KEY=sk-abcdefghijklmnopqrstuvwxyz",
+      "准备生成标题"
+    ].join("\n"));
+
+    expect(result).toContain("正在比较文章结构");
+    expect(result).toContain("准备生成标题");
+    expect(result).not.toContain("secret instructions");
+    expect(result).not.toContain("sk-");
+    expect(result.length).toBeLessThanOrEqual(500);
   });
 });

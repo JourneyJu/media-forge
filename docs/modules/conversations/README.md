@@ -154,5 +154,9 @@ DELETE /conversations/:id
 - 禁止新创作自动继承旧 Artifact、旧 LayoutPlan 或会话内全部旧资源。
 - 禁止展示模型原始思维链。
 - SSE 断线必须通过持久化 RunEvent 补发。
+- Agent 流式过程继续使用持久化 RunEvent 和 `Last-Event-ID`；Redis 通知不能作为唯一事实源。
+- `run.heartbeat` 只表达任务存活、阶段和耗时，不包含模型文本。
+- 用户事件只允许安全推理摘要，不允许原始思维链、prompt、Skill 完整指令或 raw model output。
+- Conversation 删除时，Agent 增量事件和最终摘要随 Run 聚合一起清理。
 - 删除 Outbox 必须先固化 object keys，再删除数据库聚合。
 - 目标行为和契约见 `docs/specs/015-multi-agent-content-and-layout-quality.md`。

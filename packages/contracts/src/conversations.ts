@@ -36,6 +36,15 @@ export const runEventTypeSchema = z.enum([
   "task.card.updated",
   "step.started",
   "step.completed",
+  "agent.started",
+  "agent.progress",
+  "agent.reasoning.delta",
+  "agent.reasoning.completed",
+  "agent.output.validating",
+  "agent.retry.started",
+  "agent.completed",
+  "agent.failed",
+  "run.heartbeat",
   "clarification.required",
   "clarification.submitted",
   "decision.required",
@@ -53,6 +62,22 @@ export type CreationRunType = z.infer<typeof creationRunTypeSchema>;
 export type CreationMode = z.infer<typeof creationModeSchema>;
 export type ArtifactType = z.infer<typeof artifactTypeSchema>;
 export type RunEventType = z.infer<typeof runEventTypeSchema>;
+
+export const agentProgressPhaseSchema = z.enum(["thinking", "generating", "validating", "retrying"]);
+export const agentProgressPayloadSchema = z.object({
+  runId: z.string().trim().min(1),
+  stepId: z.string().trim().min(1),
+  agentName: z.string().trim().min(1).max(80),
+  sequence: z.number().int().positive(),
+  phase: agentProgressPhaseSchema,
+  delta: z.string().max(500).optional(),
+  summary: z.string().max(500).optional(),
+  elapsedMs: z.number().int().nonnegative(),
+  retryCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime()
+});
+export type AgentProgressPhase = z.infer<typeof agentProgressPhaseSchema>;
+export type AgentProgressPayload = z.infer<typeof agentProgressPayloadSchema>;
 
 export const createConversationRequestSchema = z.object({
   workspaceId: z.string().trim().min(1),
@@ -203,6 +228,12 @@ export interface TaskStepView {
   label: string;
   status: TaskStepViewStatus;
   summary?: string;
+  phase?: AgentProgressPhase;
+  progressText?: string;
+  reasoningSummary?: string;
+  elapsedMs?: number;
+  retryCount?: number;
+  lastActivityAt?: string;
 }
 
 export interface TaskCardChatMessage {

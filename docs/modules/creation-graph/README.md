@@ -159,6 +159,24 @@ run.failed
 
 `clarification.required` 只用于必要追问，不用于确认执行计划。`decision.required` 仅作为旧客户端迁移期间的兼容事件，目标实现不再产生。
 
+规格 016 增加 Agent 模型调用期间的产品事件：
+
+```text
+agent.started
+agent.progress
+agent.reasoning.delta
+agent.reasoning.completed
+agent.output.validating
+agent.retry.started
+agent.completed
+agent.failed
+run.heartbeat
+```
+
+这些事件只包含安全推理摘要、真实执行阶段、耗时和重试状态。Creation Graph 不得把模型原始思维链、raw output、系统 prompt、Skill 完整指令或模型调用参数写入 `RunEvent`。模型 `content` 分片只在 Worker 内部缓冲，完整 JSON 通过 Zod 后才能成为 `AgentOutput`。
+
+Worker 不持久化供应商原始 reasoning；每个 Agent 首次收到 reasoning 信号时只写一条平台生成的安全业务摘要。没有新增量时每 5 秒写 `run.heartbeat`；完成、失败、取消或等待追问后停止 heartbeat。超过运行阈值且没有 Worker 活动的 Run 必须由恢复机制进入明确终态，不能永久停留在 running。
+
 ## 数据写入规则
 
 - 每个节点开始时写 `AgentTask(status=running)`。
@@ -208,11 +226,14 @@ POST /runs/:id/clarifications
 - 新主题不继承旧主题、旧素材或旧 LayoutPlan。
 - 生产模型不可用时明确失败，不返回 Demo 文章。
 - Reviewer 未通过时不创建 Artifact，并回退到对应问题节点。
+- 模型长调用期间持续产生安全进度或 heartbeat，不出现无反馈等待。
+- 所有异常路径产生唯一 Run 终态，不静默结束。
 
 ## 实施路由
 
 - 初始规格：`docs/specs/004-langgraph-multi-agent-creation-system.md`
 - 生产化补全规格：`docs/specs/006-langgraph-multi-agent-production-completion.md`
+- 流式过程反馈规格：`docs/specs/016-streaming-agent-progress.md`
 - 会话级上下文管理规格：`docs/specs/013-conversation-session-memory.md`
 - 内容与排版质量重构：`docs/specs/015-multi-agent-content-and-layout-quality.md`
 - 结构化渲染决策：`docs/adr/010-structured-content-and-layout-plan.md`

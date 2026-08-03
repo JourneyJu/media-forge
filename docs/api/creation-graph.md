@@ -73,6 +73,43 @@ data: {"runId":"run_1","artifactId":"artifact_1","artifactType":"wechat_article"
 
 事件必须在 Worker 节点真实执行期间写入 PostgreSQL。不得在任务完成后遍历历史步骤制造伪实时事件。
 
+### Agent 流式过程事件
+
+规格 016 扩展以下事件：
+
+```text
+agent.started
+agent.progress
+agent.reasoning.delta
+agent.reasoning.completed
+agent.output.validating
+agent.retry.started
+agent.completed
+agent.failed
+run.heartbeat
+```
+
+示例：
+
+```text
+id: 21
+event: agent.reasoning.delta
+data: {"runId":"run_1","stepId":"task_1","agentName":"MaterialAgent","sequence":3,"phase":"thinking","delta":"正在核对素材与当前主题的关系","elapsedMs":8200,"retryCount":0,"createdAt":"2026-08-03T00:00:08.200Z"}
+
+id: 22
+event: agent.output.validating
+data: {"runId":"run_1","stepId":"task_1","agentName":"MaterialAgent","sequence":4,"phase":"validating","summary":"正在检查素材分析字段","elapsedMs":9100,"retryCount":0,"createdAt":"2026-08-03T00:00:09.100Z"}
+```
+
+规则：
+
+- `event_no` 仍是 SSE `id`，`sequence` 只用于单 Agent 增量去重。
+- `delta` 单条最多 500 字符，仅允许承载平台映射的安全业务摘要，不承载供应商原始 reasoning。
+- `run.heartbeat` 不包含模型文本。
+- 事件不得包含系统 prompt、原始思维链、raw JSON、API Key 或供应商错误正文。
+- 老客户端可以忽略未知事件，现有 SSE URL 和断线续传语义不变。
+- 本节事件已纳入共享 contracts；部署前不得视为环境已上线接口。
+
 ## `POST /runs/:runId/clarifications`
 
 用户补充必要信息后恢复 LangGraph。
