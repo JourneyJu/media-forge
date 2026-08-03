@@ -41,7 +41,7 @@ https://146.56.198.214
 Nginx 路由：
 
 - `/auth/*` -> auth
-- `/conversations*`、`/runs*`、`/upload-sessions*`、`/resources*`、`/ai/*`、`/admin/model-*` -> service
+- `/conversations*`、`/runs*`、`/upload-sessions*`、`/resources*`、`/user-skills*`、`/ai/*`、`/admin/model-*` -> service
 - `/admin/usage*` 按 `Accept` 头区分页面导航和 API 请求：页面走 web，接口走 service
 - 其他路径 -> web
 
