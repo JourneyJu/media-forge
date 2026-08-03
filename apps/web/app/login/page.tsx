@@ -91,10 +91,10 @@ function LoginForm() {
   return (
     <main className="login-page">
       <div className="login-brand-block" aria-label="MediaForge">
-        <span className="login-brand-mark" aria-hidden="true">M</span>
+        <span className="brand-mark login-brand-mark" aria-hidden="true">M</span>
         <div>
-          <strong>MediaForge</strong>
-          <span>公众号创作平台</span>
+          <strong className="brand">MediaForge</strong>
+          <span className="product-name">公众号创作平台</span>
         </div>
       </div>
 
