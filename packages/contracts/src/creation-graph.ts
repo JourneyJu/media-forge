@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ArticleDocument } from "./articles";
+import { resolvedUserSkillSchema } from "./user-skills";
 
 export const creationGraphStatusSchema = z.enum([
   "queued",
@@ -236,6 +237,7 @@ export const creationRunContextSchema = z.object({
   userInput: z.string().trim().min(1),
   resourceIds: z.array(z.string().trim().min(1)).max(100),
   skillId: z.string().trim().min(1),
+  selectedSkills: z.array(resolvedUserSkillSchema).max(1).default([]),
   maxSteps: z.number().int().min(1).max(100),
   contextVersion: z.number().int().min(1).optional(),
   memory: creationRunContextMemorySchema.default({
@@ -253,6 +255,7 @@ export interface CreationGraphState {
   userInput: string;
   resourceIds: string[];
   skillId: string;
+  selectedSkills: CreationRunContext["selectedSkills"];
   memory?: CreationRunContext["memory"];
   brief?: CreativeBrief;
   clarification?: ClarificationRequest;

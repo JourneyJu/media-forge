@@ -43,6 +43,10 @@
 | `articles` | 文章 | `docs/modules/articles/README.md` |
 | `article_versions` | 文章版本，包含结构化 JSON 和快照 key | `docs/modules/articles/README.md` |
 | `layout_skill_packs` | 排版 skill 包元数据 | `docs/modules/layout-skills/README.md` |
+| `user_skills` | 用户私有公众号 Skill 主记录 | `docs/modules/layout-skills/README.md` |
+| `user_skill_versions` | 用户私有 Skill 的 manifest 和版本快照 | `docs/modules/layout-skills/README.md` |
+| `user_skill_assets` | Skill 包内 logo、二维码和品牌图片等资源元数据 | `docs/modules/layout-skills/README.md` |
+| `user_installed_skills` | 用户安装 Skill 关系和 `@` 展示别名 | `docs/modules/layout-skills/README.md` |
 | `workspace_memories` | 工作区长期记忆 | `docs/modules/workspaces/README.md` |
 | `generation_usage_events` | 用户维度的生成次数事实，每个 accepted Run 一条 | `docs/modules/admin/README.md` |
 | `model_usage_logs` | 每次真实模型调用、状态、延迟和供应商 token | `docs/modules/admin/README.md` |
@@ -65,6 +69,7 @@
 | Prompt 快照 | 快照 key | JSON 文件 |
 | 上传图片 | 元数据、识别结果 | 原图、预览图 |
 | Skill 包 | 元数据、版本 | skill JSON、prompt 模板 |
+| 用户私有 Skill 资源 | `user_skill_assets` 元数据 | logo、二维码、品牌图片、原始 Skill 包 |
 
 ## 认证与权限相关表
 

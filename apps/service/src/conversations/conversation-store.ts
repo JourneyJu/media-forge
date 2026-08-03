@@ -426,6 +426,7 @@ export function createConversationStore(options: ConversationStoreOptions = {}) 
           userInput: latestUserMessage.content,
           resourceIds: resources.get(conversationId)?.map((resource) => resource.assetId) ?? [],
           skillId: input.layoutSkillId,
+          selectedSkills: [],
           maxSteps: input.maxSteps
         }, job);
         runs.set(run.id, run);

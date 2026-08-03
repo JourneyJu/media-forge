@@ -22,34 +22,40 @@ interface BriefInput {
   userInput: string;
   resourceIds: string[];
   skillId: string;
+  selectedSkills?: CreationGraphState["selectedSkills"];
   memory?: CreationGraphState["memory"];
 }
 
 interface TitleInput {
   brief: CreativeBrief;
+  selectedSkills?: CreationGraphState["selectedSkills"];
 }
 
 interface OutlineInput {
   brief: CreativeBrief;
   titles: TitleCandidates;
+  selectedSkills?: CreationGraphState["selectedSkills"];
 }
 
 interface DraftInput {
   brief: CreativeBrief;
   titles: TitleCandidates;
   outline: ArticleOutline;
+  selectedSkills?: CreationGraphState["selectedSkills"];
   memory?: CreationGraphState["memory"];
 }
 
 interface ImagePlanInput {
   brief: CreativeBrief;
   outline: ArticleOutline;
+  selectedSkills?: CreationGraphState["selectedSkills"];
 }
 
 interface ReviewInput {
   brief: CreativeBrief;
   draft: ArticleDraft;
   imagePlan: ImagePlan;
+  selectedSkills?: CreationGraphState["selectedSkills"];
 }
 
 interface RevisionInput extends ReviewInput {
@@ -103,12 +109,24 @@ function inferAudience(input: string): string {
 }
 
 function createDemoBrief(input: BriefInput): CreativeBrief {
+  const selectedSkill = input.selectedSkills?.[0];
+  const skillRules = selectedSkill
+    ? [
+        `使用用户私有 Skill：${selectedSkill.alias ?? selectedSkill.name}`,
+        `语气：${selectedSkill.manifest.style.tone}`,
+        ...selectedSkill.manifest.writingRules,
+        ...selectedSkill.manifest.assets.map((asset) => `资源 ${asset.key} 用途：${asset.usage}`)
+      ]
+    : [];
+  const forbiddenRules = selectedSkill?.manifest.forbiddenRules ?? [];
+
   if (input.memory?.brief && input.userInput.trim().length <= 40) {
     return creativeBriefSchema.parse({
       ...input.memory.brief,
       constraints: [
         ...input.memory.brief.constraints,
-        input.userInput
+        input.userInput,
+        ...skillRules
       ].slice(-20),
       resourceIds: [...new Set([...input.memory.brief.resourceIds, ...input.resourceIds])],
       skillId: input.skillId
@@ -142,8 +160,8 @@ function createDemoBrief(input: BriefInput): CreativeBrief {
       : "从读者熟悉的生活场景切入",
     materialRequirements,
     resourceIds: input.resourceIds,
-    constraints,
-    prohibitedContent: ["用户原始指令", "AI 思考过程", "执行计划", "审校说明"],
+    constraints: [...constraints, ...skillRules].slice(0, 20),
+    prohibitedContent: ["用户原始指令", "AI 思考过程", "执行计划", "审校说明", ...forbiddenRules].slice(0, 20),
     skillId: input.skillId
   });
 }

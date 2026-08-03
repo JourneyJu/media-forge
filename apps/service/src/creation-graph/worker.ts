@@ -49,6 +49,7 @@ function createInitialState(job: CreationRunJob, context: {
   userInput: string;
   resourceIds: string[];
   skillId: string;
+  selectedSkills?: CreationGraphState["selectedSkills"];
   memory?: CreationGraphState["memory"];
 }): CreationGraphState {
   return {
@@ -58,6 +59,7 @@ function createInitialState(job: CreationRunJob, context: {
     userInput: context.userInput,
     resourceIds: context.resourceIds,
     skillId: context.skillId,
+    selectedSkills: context.selectedSkills ?? [],
     memory: context.memory,
     reviewReports: [],
     revisionCount: 0,

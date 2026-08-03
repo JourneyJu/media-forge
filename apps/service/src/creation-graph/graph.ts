@@ -41,6 +41,10 @@ const GraphAnnotation = Annotation.Root({
     default: () => []
   }),
   skillId: Annotation<string>(),
+  selectedSkills: Annotation<CreationGraphState["selectedSkills"]>({
+    reducer: (_current, update) => update,
+    default: () => []
+  }),
   memory: Annotation<CreationGraphState["memory"] | undefined>(),
   brief: Annotation<CreativeBrief | undefined>(),
   clarification: Annotation<ClarificationRequest | undefined>(),
@@ -138,6 +142,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         userInput: state.userInput,
         resourceIds: state.resourceIds,
         skillId: state.skillId,
+        selectedSkills: state.selectedSkills,
         memory: state.memory
       }),
       status: "running"
@@ -174,7 +179,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "title",
     "标题策划",
     async (state) => ({
-      titles: await agents.createTitles({ brief: requireBrief(state) })
+      titles: await agents.createTitles({ brief: requireBrief(state), selectedSkills: state.selectedSkills })
     }),
     (update) => `已推荐《${update.titles ? selectedTitle(update.titles) : ""}》`
   );
@@ -186,7 +191,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => ({
       outline: await agents.createOutline({
         brief: requireBrief(state),
-        titles: requireTitles(state)
+        titles: requireTitles(state),
+        selectedSkills: state.selectedSkills
       })
     }),
     (update) => `已完成 ${update.outline?.sections.length ?? 0} 个章节的故事与商业结构`
@@ -201,6 +207,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         brief: requireBrief(state),
         titles: requireTitles(state),
         outline: requireOutline(state),
+        selectedSkills: state.selectedSkills,
         memory: state.memory
       })
     }),
@@ -214,7 +221,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => ({
       imagePlan: await agents.planImages({
         brief: requireBrief(state),
-        outline: requireOutline(state)
+        outline: requireOutline(state),
+        selectedSkills: state.selectedSkills
       })
     }),
     (update) => `已规划 ${update.imagePlan?.items.length ?? 0} 个图片位置`
@@ -228,7 +236,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
       const report = await agents.reviewDraft({
         brief: requireBrief(state),
         draft: requireDraft(state),
-        imagePlan: requireImagePlan(state)
+        imagePlan: requireImagePlan(state),
+        selectedSkills: state.selectedSkills
       });
       return {
         reviewReports: [...state.reviewReports, report]
@@ -247,6 +256,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
         report: state.reviewReports.at(-1)!,
+        selectedSkills: state.selectedSkills,
         memory: state.memory
       }),
       revisionCount: state.revisionCount + 1

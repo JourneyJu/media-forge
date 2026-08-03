@@ -17,10 +17,16 @@
 | Renderer 白名单 | 输出不包含脚本、事件属性、外部 CSS、CSS 变量。 |
 | 视频降级 | 视频块输出占位和 warning。 |
 | 样式兼容 | 标题、段落、图片、二维码、CTA 使用内联样式。 |
+| 用户 Skill 导入 | 校验 manifest、资源文件、图片类型、大小、尺寸和安全扫描。 |
+| 用户 Skill 权限 | 当前用户只能查询、安装和引用自己的私有 Skill。 |
+| `@` 引用 | 前端传结构化 mention，后端重新校验 Skill 和 version。 |
+| Skill 资源使用 | logo、二维码和品牌图只能通过 `assetKey` 进入结构化文章。 |
+| 版本冻结 | Run 创建后 Skill 更新不影响已冻结上下文和历史文章。 |
 
 ## 验证命令
 
 ```bash
 pnpm --filter @mediaforge/contracts typecheck
 pnpm --filter @mediaforge/service test
+pnpm --filter @mediaforge/web typecheck
 ```

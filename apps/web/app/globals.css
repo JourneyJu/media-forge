@@ -1296,6 +1296,88 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   font-weight: 900;
 }
 
+.skill-manager {
+  margin-top: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(33, 184, 148, .22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .74);
+}
+
+.skill-manager-header,
+.skill-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.skill-manager-header strong {
+  font-size: 13px;
+}
+
+.skill-manager button {
+  border-radius: 6px;
+}
+
+.skill-list {
+  display: grid;
+  gap: 6px;
+}
+
+.skill-list article {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.skill-list article.active {
+  border-color: rgba(33, 184, 148, .5);
+  background: #f3fbf7;
+}
+
+.skill-list article > button:first-child {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.skill-list strong,
+.skill-list span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-list span,
+.skill-list p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.skill-manager textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .resource-gallery-backdrop {
   position: fixed;
   inset: 0;

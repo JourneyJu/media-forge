@@ -15,7 +15,9 @@ import type {
   TaskCardChatMessage,
   TaskCardStatus,
   TaskStepView,
-  AuthUser
+  AuthUser,
+  UserSkillManifest,
+  UserSkillSummary
 } from "@mediaforge/contracts";
 import {
   appendConversationTurn,
@@ -34,6 +36,7 @@ import {
 } from "./lib/conversations-api";
 import { getMe, logout } from "./lib/auth-api";
 import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
+import { disableUserSkill, importUserSkill, listUserSkills } from "./lib/user-skills-api";
 import { buildWechatPreviewHtml } from "./lib/wechat-preview";
 
 type PreviewMode = "preview" | "source";
@@ -557,6 +560,10 @@ export default function HomePage() {
   const [result, setResult] = useState<GenerateWechatArticleResponse | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [userSkills, setUserSkills] = useState<UserSkillSummary[]>([]);
+  const [selectedUserSkillId, setSelectedUserSkillId] = useState("");
+  const [skillImportOpen, setSkillImportOpen] = useState(false);
+  const [skillManifestText, setSkillManifestText] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [uploadSessionId, setUploadSessionId] = useState<string | null>(null);
   const [assets, setAssets] = useState<ResourceSummary[]>([]);
@@ -598,6 +605,10 @@ export default function HomePage() {
 
   useEffect(() => {
     void refreshHistory();
+  }, []);
+
+  useEffect(() => {
+    void refreshUserSkills();
   }, []);
 
   useEffect(() => {
@@ -752,6 +763,21 @@ export default function HomePage() {
     }
   }
 
+  async function refreshUserSkills(): Promise<void> {
+    try {
+      const response = await listUserSkills();
+      setUserSkills(response.items);
+      setSelectedUserSkillId((current) => {
+        if (!current) return "";
+        return response.items.some((skill) => skill.id === current && skill.installed && skill.status === "active")
+          ? current
+          : "";
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Skill 列表读取失败");
+    }
+  }
+
   function startNewConversation(): void {
     setTopic("");
     setResult(null);
@@ -826,6 +852,9 @@ export default function HomePage() {
       return;
     }
 
+    const selectedUserSkill = userSkills.find((skill) =>
+      skill.id === selectedUserSkillId && skill.installed && skill.status === "active"
+    );
     const resourceIds = assets.map((asset) => asset.id);
     const optimisticMessage = createLocalUserMessage(content, resourceIds);
     dispatch({ type: "user_message_added", message: optimisticMessage });
@@ -840,6 +869,13 @@ export default function HomePage() {
         ...(uploadSessionId ? { uploadSessionId } : {}),
         resourceIds,
         layoutSkillId: layoutSkill,
+        skillMentions: selectedUserSkill?.installedVersionId
+          ? [{
+              skillId: selectedUserSkill.id,
+              versionId: selectedUserSkill.installedVersionId,
+              alias: selectedUserSkill.alias ?? selectedUserSkill.name
+            }]
+          : [],
         maxSteps: 12
       };
       const response = conversationId
@@ -863,6 +899,33 @@ export default function HomePage() {
       setStatus(error instanceof Error ? error.message : "文章生成失败");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleImportSkill(): Promise<void> {
+    try {
+      const manifest = JSON.parse(skillManifestText) as UserSkillManifest;
+      await importUserSkill({
+        idempotencyKey: crypto.randomUUID(),
+        manifest
+      });
+      setSkillManifestText("");
+      setSkillImportOpen(false);
+      await refreshUserSkills();
+      setStatus("Skill 已导入并安装");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Skill 导入失败");
+    }
+  }
+
+  async function handleDisableSkill(skillId: string): Promise<void> {
+    try {
+      await disableUserSkill(skillId);
+      if (selectedUserSkillId === skillId) setSelectedUserSkillId("");
+      await refreshUserSkills();
+      setStatus("Skill 已停用");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Skill 停用失败");
     }
   }
 
@@ -1122,6 +1185,22 @@ export default function HomePage() {
                     <option value="youth-growth-listicle">少儿成长清单</option>
                   </select>
                 </label>
+                <label className="inline-select">
+                  <span>私有 Skill</span>
+                  <select
+                    value={selectedUserSkillId}
+                    onChange={(event) => setSelectedUserSkillId(event.target.value)}
+                    aria-label="选择私有 Skill"
+                  >
+                    <option value="">不使用</option>
+                    {userSkills.filter((skill) => skill.installed && skill.status === "active").map((skill) => (
+                      <option key={skill.id} value={skill.id}>{skill.alias ?? skill.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <button className="resource-action" type="button" onClick={() => setSkillImportOpen((open) => !open)}>
+                  管理 Skills
+                </button>
                 <span className="paste-hint">支持粘贴图片、文档或网页链接作为素材</span>
                 <button
                   className="send-button"
@@ -1134,6 +1213,36 @@ export default function HomePage() {
                   {busy ? "..." : "➜"}
                 </button>
               </div>
+              {skillImportOpen && (
+                <div className="skill-manager">
+                  <div className="skill-manager-header">
+                    <strong>我的 Skills</strong>
+                    <button type="button" onClick={() => void refreshUserSkills()}>刷新</button>
+                  </div>
+                  <div className="skill-list">
+                    {userSkills.length === 0 ? (
+                      <p>还没有安装私有 Skill。</p>
+                    ) : userSkills.map((skill) => (
+                      <article key={skill.id} className={skill.id === selectedUserSkillId ? "active" : ""}>
+                        <button type="button" onClick={() => setSelectedUserSkillId(skill.id)}>
+                          <strong>{skill.alias ?? skill.name}</strong>
+                          <span>{skill.description || "私有公众号风格"}</span>
+                        </button>
+                        <button type="button" onClick={() => void handleDisableSkill(skill.id)}>停用</button>
+                      </article>
+                    ))}
+                  </div>
+                  <textarea
+                    value={skillManifestText}
+                    onChange={(event) => setSkillManifestText(event.target.value)}
+                    placeholder="粘贴 manifest.json 后导入 Skill"
+                    rows={7}
+                  />
+                  <button type="button" onClick={() => void handleImportSkill()} disabled={!skillManifestText.trim()}>
+                    导入 Skill
+                  </button>
+                </div>
+              )}
               <input
                 ref={assetInputRef}
                 className="visually-hidden"

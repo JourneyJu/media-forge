@@ -23,6 +23,7 @@ import {
 } from "@mediaforge/contracts";
 import type { GenerateWechatArticleResponse } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
+import type { UserSkillService } from "../user-skills/user-skill-service";
 
 interface ConversationRow {
   id: string;
@@ -215,6 +216,7 @@ function createRunContext(
     userInput: string;
     resourceIds: string[];
     skillId: string;
+    selectedSkills: CreationRunContext["selectedSkills"];
     maxSteps: number;
   },
   memory: ConversationWorkingMemory
@@ -246,7 +248,8 @@ function createRunContext(
 }
 
 export function createConversationLifecycleService(
-  databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/mediaforge"
+  databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/mediaforge",
+  userSkills?: Pick<UserSkillService, "resolveMentions">
 ) {
   const pool = new Pool({ connectionString: databaseUrl });
 
@@ -308,13 +311,17 @@ export function createConversationLifecycleService(
   ): Promise<CreationRun> {
     const run = createQueuedRun(conversationId, createdAt);
     const memory = await getConversationMemory(client, conversationId, contextVersion);
+    const selectedSkills = userSkills
+      ? await userSkills.resolveMentions(ownerId, input.skillMentions)
+      : [];
     const runContext = createRunContext(
       conversationId,
       contextVersion,
       {
         userInput,
         resourceIds,
-        skillId: input.layoutSkillId,
+        skillId: selectedSkills[0]?.skillId ?? input.layoutSkillId,
+        selectedSkills,
         maxSteps: input.maxSteps
       },
       memory

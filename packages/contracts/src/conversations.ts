@@ -3,6 +3,8 @@ import type { AgentPlan, AgentStep, AgentWaitingFor, SubmitAgentDecisionRequest 
 import type { GenerateWechatArticleResponse } from "./ai-generation";
 import { builtInLayoutSkillIds } from "./layout-skills";
 import type { ResourceSummary } from "./assets";
+import { userSkillMentionSchema } from "./user-skills";
+import type { UserSkillMention } from "./user-skills";
 
 export const conversationStatusSchema = z.enum(["active", "deleting", "archived"]);
 export const conversationMessageRoleSchema = z.enum(["user", "assistant", "system"]);
@@ -61,6 +63,7 @@ export const createConversationTurnRequestSchema = z.object({
   uploadSessionId: z.string().trim().min(1).optional(),
   resourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   layoutSkillId: z.enum(builtInLayoutSkillIds).default("auto"),
+  skillMentions: z.array(userSkillMentionSchema).max(1).default([]),
   maxSteps: z.number().int().min(4).max(12).default(12)
 });
 
@@ -82,6 +85,7 @@ export const createConversationResourceRequestSchema = z.object({
 export const createConversationRunRequestSchema = z.object({
   type: creationRunTypeSchema.default("wechat_article_generation"),
   layoutSkillId: z.enum(builtInLayoutSkillIds).default("auto"),
+  skillMentions: z.array(userSkillMentionSchema).max(1).default([]),
   maxSteps: z.number().int().min(4).max(12).default(12)
 });
 
@@ -102,6 +106,7 @@ export type CreateConversationResourceRequest = z.infer<typeof createConversatio
 export type CreateConversationRunRequest = z.infer<typeof createConversationRunRequestSchema>;
 export type SubmitRunClarificationRequest = z.infer<typeof submitRunClarificationRequestSchema>;
 export type SubmitRunDecisionRequest = SubmitAgentDecisionRequest;
+export type ConversationSkillMention = UserSkillMention;
 
 export interface Conversation {
   id: string;

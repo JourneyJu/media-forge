@@ -8,4 +8,5 @@ export * from "./common";
 export * from "./conversations";
 export * from "./creation-graph";
 export * from "./layout-skills";
+export * from "./user-skills";
 export * from "./workspaces";

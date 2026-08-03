@@ -14,7 +14,9 @@ import {
   upsertModelConnectionRequestSchema,
   usageRangeQuerySchema,
   submitRunClarificationRequestSchema,
-  submitAgentDecisionRequestSchema
+  submitAgentDecisionRequestSchema,
+  importUserSkillRequestSchema,
+  installUserSkillRequestSchema
 } from "@mediaforge/contracts";
 import { ZodError } from "zod";
 import { agentRunStore } from "./agent-runs/agent-run";
@@ -25,6 +27,7 @@ import { adminConsole } from "./admin-console";
 import { conversationStore } from "./conversations/conversation-store";
 import { createConversationLifecycleService } from "./conversations/conversation-lifecycle";
 import { createResourceService } from "./assets/resource-service";
+import { createUserSkillService } from "./user-skills/user-skill-service";
 import { getCreationRuntime } from "./creation-graph/runtime";
 import { buildWorkspaceProfile, parseCreateWorkspaceRequest } from "./workspaces";
 
@@ -38,11 +41,12 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
   response.end(JSON.stringify(body));
 }
 
-const conversationLifecycle = createConversationLifecycleService();
 const resourceService = createResourceService();
+const userSkillService = createUserSkillService();
+const conversationLifecycle = createConversationLifecycleService(undefined, userSkillService);
 
 export async function closeHttpServices(): Promise<void> {
-  await Promise.all([conversationLifecycle.close(), resourceService.close(), adminConsole.close()]);
+  await Promise.all([conversationLifecycle.close(), resourceService.close(), userSkillService.close(), adminConsole.close()]);
 }
 
 function getHeader(request: IncomingMessage, name: string): string | undefined {
@@ -88,7 +92,13 @@ function sendDomainError(response: ServerResponse, error: unknown): boolean {
     USAGE_RANGE_INVALID: 400,
     USAGE_USER_NOT_FOUND: 404,
     USAGE_MODEL_NOT_FOUND: 404,
-    GENERATION_MODEL_UNAVAILABLE: 503
+    GENERATION_MODEL_UNAVAILABLE: 503,
+    USER_SKILL_NOT_FOUND: 404,
+    USER_SKILL_IMPORT_INVALID: 422,
+    USER_SKILL_FORBIDDEN: 403,
+    USER_SKILL_ASSET_INVALID: 422,
+    USER_SKILL_VERSION_CONFLICT: 409,
+    LAYOUT_SKILL_DISABLED: 409
   };
   const status = statusByCode[code];
   if (!status) return false;
@@ -213,6 +223,62 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
     throw error;
   }
   const ownerId = auth.userId;
+
+  if (pathname.startsWith("/user-skills")) {
+    try {
+      const assetPreviewRoute = pathname.match(/^\/user-skills\/assets\/([^/]+)\/preview$/u);
+      if (request.method === "GET" && assetPreviewRoute) {
+        await sendObject(response, await userSkillService.getAssetPreview(ownerId, decodeURIComponent(assetPreviewRoute[1]!)));
+        return;
+      }
+      if (request.method === "GET" && pathname === "/user-skills") {
+        sendJson(response, 200, await userSkillService.list(ownerId));
+        return;
+      }
+      if (request.method === "POST" && pathname === "/user-skills/import") {
+        const body = importUserSkillRequestSchema.parse(await readJson(request));
+        sendJson(response, 201, await userSkillService.importManifest(ownerId, body));
+        return;
+      }
+      const assetRoute = pathname.match(/^\/user-skills\/([^/]+)\/versions\/([^/]+)\/assets\/([^/]+)$/u);
+      if (request.method === "POST" && assetRoute) {
+        const contentType = getHeader(request, "content-type")?.split(";")[0]?.trim() ?? "";
+        const contentLength = Number(getHeader(request, "content-length"));
+        const encodedName = getHeader(request, "x-file-name") ?? assetRoute[3]!;
+        sendJson(response, 201, await userSkillService.uploadAsset(ownerId, decodeURIComponent(assetRoute[1]!), decodeURIComponent(assetRoute[2]!), decodeURIComponent(assetRoute[3]!), {
+          originalName: decodeURIComponent(encodedName),
+          contentType,
+          contentLength,
+          body: requestBody(request)
+        }));
+        return;
+      }
+      const skillRoute = pathname.match(/^\/user-skills\/([^/]+)(?:\/(install|disable))?$/u);
+      if (skillRoute) {
+        const skillId = decodeURIComponent(skillRoute[1]!);
+        if (request.method === "GET" && !skillRoute[2]) {
+          sendJson(response, 200, await userSkillService.get(ownerId, skillId));
+          return;
+        }
+        if (request.method === "POST" && skillRoute[2] === "install") {
+          const body = installUserSkillRequestSchema.parse(await readJson(request));
+          sendJson(response, 200, await userSkillService.install(ownerId, skillId, body));
+          return;
+        }
+        if (request.method === "POST" && skillRoute[2] === "disable") {
+          sendJson(response, 200, await userSkillService.disable(ownerId, skillId));
+          return;
+        }
+      }
+    } catch (error) {
+      if (error instanceof URIError || error instanceof ZodError || error instanceof SyntaxError) {
+        sendJson(response, 400, { code: "VALIDATION_ERROR", message: "Skill 参数不合法" });
+        return;
+      }
+      if (sendDomainError(response, error)) return;
+      throw error;
+    }
+  }
 
   if (pathname.startsWith("/admin/")) {
     try {

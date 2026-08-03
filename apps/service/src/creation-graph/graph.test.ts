@@ -11,6 +11,7 @@ function baseState(userInput: string): CreationGraphState {
     userInput,
     resourceIds: [],
     skillId: "auto",
+    selectedSkills: [],
     reviewReports: [],
     revisionCount: 0,
     maxRevisionCount: 2,
