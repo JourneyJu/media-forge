@@ -371,6 +371,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     analyzeMaterials: (input) => generate({
       agentName: "MaterialAgent",
       systemPrompt: "根据本轮资源 ID、已有素材摘要和 Skill 品牌资源生成 MaterialAnalysis。不得虚构图片内容；无法识别时标记 unknown。",
+      outputContract: '{"items":[{"resourceId":"string","type":"image|document|link|unknown","description":"string","ocrText?":"string","suggestedUsage?":"string","quality?":"high|medium|low"}]}。items 可为空数组。',
       input,
       schema: materialAnalysisSchema,
       temperature: 0.1
@@ -378,6 +379,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     buildBrief: (input) => generate({
       agentName: "BriefAgent",
       systemPrompt: "只以本轮 userInput 为最高优先级，将需求提取为 CreativeBrief。subject 必须准确概括当前主题，不得沿用记忆中的旧主题；逐项保留用户约束和 Skill 规则。",
+      outputContract: '{"subject":"string","goal":"brand|promotion|event|education|story","audience":"string","contentType":"string","campaignObject?":"string","tone":"string","storyAngle":"string","materialRequirements":["string"],"resourceIds":["string"],"constraints":["string"],"prohibitedContent":["string"],"skillId":"string"}',
       input,
       schema: creativeBriefSchema,
       temperature: 0.2
@@ -385,6 +387,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     createContentPlan: (input) => generate({
       agentName: "ContentPlannerAgent",
       systemPrompt: "先做内容设计再写正文。输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。禁止套用无关行业模板。",
+      outputContract: '{"angle":"string","narrative":"string","requirements":[{"requirement":"string","evidence":"string"}],"sections":[至少3项{"heading":"string","purpose":"string","keyPoints":["string"],"assetRefs":["string"]}],"callToAction":"string"}',
       input,
       schema: contentPlanSchema,
       temperature: 0.45
@@ -392,6 +395,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     createTitles: (input) => generate({
       agentName: "TitleAgent",
       systemPrompt: "基于当前 Brief 和 ContentPlan 生成 3 到 5 个准确且有传播力的标题并选出一项。不得包含旧主题或用户指令。",
+      outputContract: '{"items":[3到5项{"id":"string","title":"string","subtitle?":"string","angle":"string","audienceFit":0到100数字,"brandFit":0到100数字,"clickPotential":0到100数字,"riskFlags":["string"]}],"selectedId":"必须引用items中的id","selectionReason":"string"}',
       input,
       schema: titleCandidatesSchema,
       temperature: 0.65
@@ -399,6 +403,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     createOutline: (input) => generate({
       agentName: "OutlineAgent",
       systemPrompt: "把 ContentPlan 和选定标题落实为公众号提纲，每节必须有独立目标、故事节拍和表达目标，不得改变当前主题。",
+      outputContract: '{"title":"string","subtitle?":"string","openingHook":"string","callToAction":"string","sections":[至少3项{"title":"string","objective":"string","storyBeat":"string","commercialGoal":"string"}]}',
       input,
       schema: articleOutlineSchema,
       temperature: 0.4
@@ -406,6 +411,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     writeDraft: (input) => generate({
       agentName: "WriterAgent",
       systemPrompt: "严格按照 Brief、ContentPlan 和 Outline 写结构化中文正文。每个 section 明确 purpose、段落和 assetRefs，使用具体事实与场景，禁止输出指令、计划、审校说明、AI 过程或无关旧主题。",
+      outputContract: '{"title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
       input,
       schema: articleDraftSchema,
       temperature: 0.65
@@ -413,6 +419,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     planImages: (input) => generate({
       agentName: "ImagePlannerAgent",
       systemPrompt: "根据 MaterialAnalysis、ContentPlan 和结构化正文规划封面与章节图片。只引用输入中存在的 resourceId 或 Skill assetKey，不得虚构 URL。",
+      outputContract: '{"items":[至少1项{"placement":"cover|section|ending","description":"string","resourceId?":"只能引用输入中的resourceId","assetKey?":"只能引用输入中的assetKey"}]}',
       input,
       schema: imagePlanSchema,
       temperature: 0.3
@@ -420,6 +427,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     createLayout: (input) => generate({
       agentName: "LayoutAgent",
       systemPrompt: "根据当前主题、内容密度、图片计划和 Skill 生成受控 LayoutPlan。版式必须服务当前主题；只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
+      outputContract: '{"theme":"editorial|celebration|story|report|brand","palette":{"primary":"#RRGGBB","accent":"#RRGGBB","text":"#RRGGBB","surface":"#RRGGBB"},"titleTreatment":"centered|left-editorial|poster","introTreatment":"plain|quote|highlight-panel","sectionTreatment":"numbered|labelled|minimal|timeline","imageTreatment":"full-width|framed|gallery","blocks":[至少2项{"kind":"title|intro|section|image|quote|brand|cta","sectionIndex?":0到9整数,"assetRef?":"string"}]}',
       input,
       schema: layoutPlanSchema,
       temperature: 0.5
@@ -427,6 +435,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     reviewDraft: (input) => generate({
       agentName: "ReviewerAgent",
       systemPrompt: "审校主题一致性、用户要求覆盖、内容深度、素材匹配、Skill 合规、版式适配、微信阅读和事实风险。发现旧主题、错图或套用旧版式时必须 passed=false，并把 target 指向 brief、plan、body、image 或 layout。",
+      outputContract: '{"passed":true或false,"scores":{"story":0到100数字,"commercial":0到100数字,"audienceFit":0到100数字,"naturalness":0到100数字,"wechatReadability":0到100数字,"factualRisk":0到100数字,"subjectAlignment":0到100数字,"requirementCoverage":0到100数字,"contentDepth":0到100数字,"layoutFit":0到100数字},"issues":[{"code":"string","severity":"warning|error","target":"brief|plan|title|outline|body|image|layout|cta","instruction":"string"}]}',
       input,
       schema: reviewReportSchema,
       temperature: 0.15
@@ -434,6 +443,7 @@ function createGatewayAgents(context: { userId: string; runId?: string }): Creat
     reviseDraft: (input) => generate({
       agentName: "RevisionAgent",
       systemPrompt: "只处理 ReviewReport 中 target=body/title/cta 的问题，保持已确认主题和未要求修改的章节。结构或主题问题不得用正文润色掩盖。",
+      outputContract: '{"title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
       input,
       schema: articleDraftSchema,
       temperature: 0.4

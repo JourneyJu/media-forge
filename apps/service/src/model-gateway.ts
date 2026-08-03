@@ -136,6 +136,7 @@ export async function generateStructuredJsonWithGateway<T>(
   options: {
     agentName: string;
     systemPrompt: string;
+    outputContract: string;
     input: unknown;
     schema: z.ZodType<T>;
     temperature?: number;
@@ -153,58 +154,82 @@ export async function generateStructuredJsonWithGateway<T>(
   const usageId = options.usage
     ? await adminConsole.startModelUsage(options.usage)
     : null;
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    {
+      role: "system",
+      content: `${options.systemPrompt}\n只返回严格 JSON，不返回 Markdown、解释、思考过程或执行计划。\n输出契约：${options.outputContract}`
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        agent: options.agentName,
+        input: options.input
+      })
+    }
+  ];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  let providerRequestId: string | undefined;
 
   try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${config.apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: options.temperature ?? 0.5,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `${options.systemPrompt}\n只返回严格 JSON，不返回 Markdown、解释、思考过程或执行计划。`
-          },
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: config.model,
+          temperature: options.temperature ?? 0.5,
+          response_format: { type: "json_object" },
+          messages
+        }),
+        redirect: "error",
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+      }
+
+      const payload = await response.json() as ChatCompletionResponse;
+      providerRequestId = payload.id ?? providerRequestId;
+      inputTokens += payload.usage?.prompt_tokens ?? 0;
+      outputTokens += payload.usage?.completion_tokens ?? 0;
+      totalTokens += payload.usage?.total_tokens ?? 0;
+      const content = payload.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error("MODEL_GATEWAY_INVALID_RESPONSE");
+      }
+
+      try {
+        const parsed = options.schema.parse(JSON.parse(content));
+        if (usageId) {
+          await adminConsole.finishModelUsage(usageId, {
+            status: "succeeded",
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            providerRequestId,
+            latencyMs: Date.now() - startedAt
+          });
+        }
+        return parsed;
+      } catch (error) {
+        if (attempt === 1) throw error;
+        const details = error instanceof Error ? error.message.slice(0, 2000) : "JSON does not match the output contract";
+        messages.push(
+          { role: "assistant", content },
           {
             role: "user",
-            content: JSON.stringify({
-              agent: options.agentName,
-              input: options.input
-            })
+            content: `上一个 JSON 不符合输出契约。校验错误：${details}\n请严格按照输出契约返回完整替代 JSON，所有必填字段都必须存在。`
           }
-        ]
-      }),
-      redirect: "error",
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      throw new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+        );
+      }
     }
-
-    const payload = await response.json() as ChatCompletionResponse;
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error("MODEL_GATEWAY_INVALID_RESPONSE");
-    }
-
-    const parsed = options.schema.parse(JSON.parse(content));
-    if (usageId) {
-      await adminConsole.finishModelUsage(usageId, {
-        status: "succeeded",
-        inputTokens: payload.usage?.prompt_tokens,
-        outputTokens: payload.usage?.completion_tokens,
-        totalTokens: payload.usage?.total_tokens,
-        providerRequestId: payload.id,
-        latencyMs: Date.now() - startedAt
-      });
-    }
-    return parsed;
+    throw new Error("MODEL_GATEWAY_SCHEMA_RETRY_EXHAUSTED");
   } catch (error) {
     if (usageId) {
       await adminConsole.finishModelUsage(usageId, {
