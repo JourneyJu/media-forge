@@ -95,6 +95,20 @@ export function sanitizeAgentProgressText(value: string): string {
     .slice(0, 500);
 }
 
+export function getCreationRunFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/aborted|aborterror/iu.test(message)) return "模型响应超时，任务已结束，请重新生成。";
+  if (message.includes("SUBJECT_MISMATCH")) return "最终内容与本轮主题匹配不足，未生成可发布预览。";
+  if (message.includes("ARTIFACT_VALIDATION_FAILED")) return "最终内容未通过发布校验，未生成可发布预览。";
+  if (message.includes("CREATION_RUN_TIMEOUT")) return "本次创作超过最长处理时间，任务已结束。";
+  if (message.includes("MODEL_GATEWAY")) return "模型服务暂时无法完成生成，请稍后重试。";
+  return "创作任务执行失败，未生成可发布预览。";
+}
+
+export function shouldRetryCreationJob(attemptsMade: number, maxAttempts: number | undefined): boolean {
+  return attemptsMade + 1 < (maxAttempts ?? 1);
+}
+
 function createAgentProgressReporter(
   runId: string,
   persistence: CreationPersistence
@@ -179,7 +193,15 @@ function createAgentProgressReporter(
     async fail(error: unknown): Promise<void> {
       if (!active) return;
       await append("agent.failed", payload("validating", {
-        summary: error instanceof Error ? error.message.slice(0, 160) : "Agent 执行失败"
+        summary: getCreationRunFailureMessage(error)
+      }));
+      active = null;
+    },
+    async retry(retryCount: number): Promise<void> {
+      if (!active) return;
+      active.retryCount = retryCount;
+      await append("agent.retry.started", payload("retrying", {
+        summary: "当前模型调用未完成，系统正在自动重试。"
       }));
       active = null;
     },
@@ -458,13 +480,18 @@ export async function processCreationRunJob(
     await adminConsole.finishGeneration(payload.runId, "completed");
     return result;
   } catch (error) {
-    await progressReporter.fail(error);
     const activeTask = [...taskIds.values()].at(-1);
     if (activeTask) await persistence.failAgentTask(activeTask, error);
+    if (shouldRetryCreationJob(job.attemptsMade, job.opts.attempts)) {
+      await progressReporter.retry(job.attemptsMade + 1);
+      await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+      throw error;
+    }
+    await progressReporter.fail(error);
     await persistence.updateRun(payload.runId, "failed", "failed");
     await appendTaskCard(persistence, payload.runId, visibleSteps, "failed");
     await persistence.appendEvent(payload.runId, "run.failed", {
-      message: error instanceof Error ? error.message : "CREATION_RUN_FAILED"
+      message: getCreationRunFailureMessage(error)
     });
     await adminConsole.finishGeneration(
       payload.runId,

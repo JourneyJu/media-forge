@@ -82,11 +82,34 @@ type ChatAction =
   | { type: "restored"; messages: ChatMessage[]; activeRunId: string | null }
   | { type: "run_activated"; runId: string }
   | { type: "run_finished"; runId: string }
+  | { type: "run_failed"; runId: string; message: string }
   | { type: "reset" };
 
 const starterHtml = `<section style="padding:36px 24px;text-align:center;color:#61706a;">
   <p style="font-size:15px;line-height:1.8;">在对话区告诉 AI 你的创作需求，生成后在这里查看手机端公众号预览。</p>
 </section>`;
+
+function createFailurePreviewHtml(message: string): string {
+  const safeMessage = message
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;")
+    .replace(/"/gu, "&quot;")
+    .replace(/'/gu, "&#39;");
+  return `<section style="padding:48px 24px;text-align:center;color:#61706a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <strong style="display:block;margin-bottom:12px;color:#26332e;font-size:17px;">本次未生成预览</strong>
+    <p style="margin:0;font-size:14px;line-height:1.8;">${safeMessage}</p>
+  </section>`;
+}
+
+function getRunFailureMessage(value: string): string {
+  if (/aborted|aborterror/iu.test(value)) return "模型响应超时，本次调用已结束，请重新生成。";
+  if (value.includes("SUBJECT_MISMATCH")) return "最终内容与本轮主题匹配不足，未生成可发布预览。";
+  if (value.includes("ARTIFACT_VALIDATION_FAILED")) return "最终内容未通过发布校验，未生成可发布预览。";
+  if (value.includes("CREATION_RUN_TIMEOUT")) return "本次创作超过最长处理时间，任务已结束。";
+  if (value.includes("MODEL_GATEWAY")) return "模型服务暂时无法完成生成，请稍后重试。";
+  return value.trim() && !/[A-Z_]{3,}/u.test(value) ? value : "创作任务执行失败，未生成可发布预览。";
+}
 
 const runEventTypes: RunEventType[] = [
   "run.created",
@@ -228,6 +251,23 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     };
   }
 
+  if (action.type === "run_failed") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.type !== "task" || message.runId !== action.runId) return message;
+        return {
+          ...message,
+          status: "failed",
+          collapsed: false,
+          steps: message.steps.map((step) => step.status === "running" || step.status === "failed"
+            ? { ...step, status: "failed", progressText: action.message }
+            : step)
+        };
+      })
+    };
+  }
+
   if (action.type === "clarification_required") {
     if (state.messages.some((message) => message.id === action.message.id)) return state;
     return { ...state, messages: [...state.messages, action.message] };
@@ -326,7 +366,9 @@ function getStepMarker(status: TaskStepView["status"]): string {
   return "";
 }
 
-function getAgentPhaseText(phase: TaskStepView["phase"]): string {
+function getAgentPhaseText(phase: TaskStepView["phase"], status?: TaskStepView["status"]): string {
+  if (status === "failed") return "失败";
+  if (status === "completed") return "已完成";
   if (phase === "thinking") return "分析中";
   if (phase === "generating") return "生成中";
   if (phase === "validating") return "校验中";
@@ -571,7 +613,7 @@ function AgentTaskCard({ message }: { message: TaskCardChatMessage }) {
                     })}
                   >
                     <strong>{step.label}</strong>
-                    <small>{getAgentPhaseText(step.phase)}{step.elapsedMs !== undefined ? ` · ${formatElapsed(step.elapsedMs)}` : ""}</small>
+                    <small>{getAgentPhaseText(step.phase, step.status)}{step.elapsedMs !== undefined ? ` · ${formatElapsed(step.elapsedMs)}` : ""}</small>
                   </button>
                   {step.summary && <p>{step.summary}</p>}
                   {stepExpanded && (step.progressText || step.reasoningSummary) && (
@@ -893,6 +935,7 @@ export default function HomePage() {
   const [uploadDrafts, setUploadDrafts] = useState<UploadDraft[]>([]);
   const [activeUploadJobs, setActiveUploadJobs] = useState(0);
   const [status, setStatus] = useState("");
+  const [runError, setRunError] = useState("");
   const [busy, setBusy] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -913,7 +956,7 @@ export default function HomePage() {
   const isGenerating = Boolean(chat.activeRunId);
   const sendDisabled = busy || hasActiveUploads || isGenerating;
   const sendButtonWaiting = busy || hasActiveUploads || isGenerating;
-  const html = result?.render.html ?? starterHtml;
+  const html = result?.render.html ?? (runError ? createFailurePreviewHtml(runError) : starterHtml);
   const previewHtml = result
     ? resolveWechatPreviewAssetUrls(html, resolveResourceUrl)
     : html;
@@ -1099,6 +1142,7 @@ export default function HomePage() {
           });
         }
         setStatus("创作完成");
+        setRunError("");
         dispatch({ type: "run_finished", runId });
         setBusy(false);
         source.close();
@@ -1106,7 +1150,10 @@ export default function HomePage() {
       }
 
       if (type === "run.failed") {
-        setStatus(getString(payload, "message", "Agent 执行失败"));
+        const failureMessage = getRunFailureMessage(getString(payload, "message", "Agent 执行失败"));
+        setStatus(failureMessage);
+        setRunError(failureMessage);
+        dispatch({ type: "run_failed", runId, message: failureMessage });
         dispatch({ type: "run_finished", runId });
         setBusy(false);
         source.close();
@@ -1149,6 +1196,7 @@ export default function HomePage() {
     uploadDrafts.forEach((upload) => URL.revokeObjectURL(upload.previewUrl));
     setTopic("");
     setResult(null);
+    setRunError("");
     setConversationId(null);
     setUploadSessionId(null);
     setAssets([]);
@@ -1194,7 +1242,9 @@ export default function HomePage() {
         : null;
       dispatch({ type: "restored", messages: restoredMessages, activeRunId: resumableRunId });
       const latestArtifact = snapshot.latestArtifacts.at(-1);
-      setResult(latestArtifact?.payload ?? null);
+      const currentArtifact = !activeRun || latestArtifact?.runId === activeRun.id ? latestArtifact : undefined;
+      setResult(currentArtifact?.payload ?? null);
+      setRunError(activeRun?.status === "failed" && !currentArtifact ? "该任务生成失败，没有可展示的预览。" : "");
       setStatus(resumableRunId ? "正在恢复创作进度" : "已打开历史会话");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "会话读取失败");
@@ -1238,6 +1288,7 @@ export default function HomePage() {
     dispatch({ type: "user_message_added", message: optimisticMessage });
     setTopic("");
     setBusy(true);
+    setRunError("");
     setStatus("正在创建创作任务...");
 
     try {

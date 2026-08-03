@@ -1,7 +1,12 @@
 import { Readable } from "node:stream";
 import type { CreationRunContext, CreationRunJob } from "@mediaforge/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { enrichImageMaterials, sanitizeAgentProgressText } from "./worker";
+import {
+  enrichImageMaterials,
+  getCreationRunFailureMessage,
+  sanitizeAgentProgressText,
+  shouldRetryCreationJob
+} from "./worker";
 
 const job: CreationRunJob = {
   runId: "run_1",
@@ -104,5 +109,18 @@ describe("agent progress safety", () => {
     expect(result).not.toContain("secret instructions");
     expect(result).not.toContain("sk-");
     expect(result.length).toBeLessThanOrEqual(500);
+  });
+
+  it("maps internal failures to user-facing Chinese messages", () => {
+    expect(getCreationRunFailureMessage(new Error("This operation was aborted"))).toContain("模型响应超时");
+    expect(getCreationRunFailureMessage(new Error("ARTIFACT_VALIDATION_FAILED:SUBJECT_MISMATCH")))
+      .toContain("主题匹配不足");
+    expect(getCreationRunFailureMessage(new Error("secret provider detail"))).not.toContain("secret");
+  });
+
+  it("only emits a terminal failure after the final queue attempt", () => {
+    expect(shouldRetryCreationJob(0, 3)).toBe(true);
+    expect(shouldRetryCreationJob(1, 3)).toBe(true);
+    expect(shouldRetryCreationJob(2, 3)).toBe(false);
   });
 });

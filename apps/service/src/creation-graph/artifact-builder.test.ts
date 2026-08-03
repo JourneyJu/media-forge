@@ -9,7 +9,7 @@ import type {
   ResolvedUserSkill,
   TitleCandidates
 } from "@mediaforge/contracts";
-import { buildArticleDocument, validateArticleArtifact } from "./artifact-builder";
+import { buildArticleDocument, hasSubjectCoverage, validateArticleArtifact } from "./artifact-builder";
 
 const title = "小兰花舞台上的获奖时刻";
 const titles: TitleCandidates = {
@@ -90,6 +90,14 @@ function validDraft(): ArticleDraft {
 }
 
 describe("artifact builder guard", () => {
+  it("accepts natural wording while rejecting an unrelated subject", () => {
+    const subject = "金舞艺术《蚊子哪里跑》小兰花奖特金奖喜报";
+    const article = "《蚊子哪里跑》拿下小兰花奖特金奖。那天，金舞艺术的孩子们捧回了这份荣誉。";
+
+    expect(hasSubjectCoverage(subject, article)).toBe(true);
+    expect(hasSubjectCoverage(subject, "一篇关于儿童摄影自然抓拍的文章")).toBe(false);
+  });
+
   it("rejects process copy and titles outside selected candidates", () => {
     const result = validateArticleArtifact({
       userInput: "帮我做一个公众号文案，要求如下",

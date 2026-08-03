@@ -46,6 +46,27 @@ function articleText(draft: ArticleDraft): string {
   ].join("\n");
 }
 
+function normalizeTopicText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+export function hasSubjectCoverage(subject: string, article: string): boolean {
+  const normalizedSubject = normalizeTopicText(subject);
+  const normalizedArticle = normalizeTopicText(article);
+  if (!normalizedSubject) return true;
+  if (normalizedArticle.includes(normalizedSubject)) return true;
+  if (normalizedSubject.length < 4) return normalizedArticle.includes(normalizedSubject);
+
+  const pairs = Array.from({ length: normalizedSubject.length - 1 }, (_, index) =>
+    normalizedSubject.slice(index, index + 2)
+  );
+  const covered = pairs.filter((pair) => normalizedArticle.includes(pair)).length;
+  return covered / pairs.length >= 0.65;
+}
+
 export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactValidationResult {
   const violations: Array<{ code: string; message: string }> = [];
   const selected = getSelectedTitle(input.titles);
@@ -69,7 +90,7 @@ export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactVa
   if (input.draft.sections.length < 3) {
     violations.push({ code: "ARTICLE_TOO_THIN", message: "正文至少需要三个有明确目的的章节" });
   }
-  if (!normalizedArticle.includes(input.brief.subject.slice(0, 12))) {
+  if (!hasSubjectCoverage(input.brief.subject, normalizedArticle)) {
     violations.push({ code: "SUBJECT_MISMATCH", message: "最终内容没有围绕本轮 CreativeBrief 主题" });
   }
   const plannedHeadings = new Set(input.contentPlan.sections.map((section) => section.heading));
