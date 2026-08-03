@@ -102,6 +102,33 @@ function clip(value: string, maxLength: number): string {
   return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
 }
 
+export function mergeClarificationIntoRunContext(
+  graphContext: CreationRunContext,
+  answers: SubmitRunClarificationRequest["answers"]
+): CreationRunContext {
+  const clarificationText = answers
+    .map((answer) => `${answer.questionId}: ${answer.value}`)
+    .join("\n");
+  const mergedUserInput = `${graphContext.userInput}\n\n补充信息：\n${clarificationText}`;
+  return {
+    ...graphContext,
+    userInput: mergedUserInput,
+    currentInstruction: mergedUserInput,
+    memory: {
+      ...graphContext.memory,
+      userConstraints: [
+        ...graphContext.memory.userConstraints,
+        clip(clarificationText, 500)
+      ],
+      revisionIntent: {
+        target: "all",
+        instruction: clip(clarificationText, 1000),
+        createdAt: now()
+      }
+    }
+  };
+}
+
 function createEmptyMemory(conversationId: string, contextVersion: number): ConversationWorkingMemory {
   return {
     conversationId,
@@ -653,9 +680,6 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
         if (!graphRun) throw new Error("RUN_CONTEXT_NOT_FOUND");
         const graphContext = creationRunContextSchema.parse(graphRun.context_json);
 
-        const clarificationText = input.answers
-          .map((answer) => `${answer.questionId}: ${answer.value}`)
-          .join("\n");
         const answerMessageId = randomUUID();
         await client.query(
           `insert into conversation_messages
@@ -669,22 +693,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
            where id = $1`,
           [run.conversation_id]
         );
-        const nextContext: CreationRunContext = {
-          ...graphContext,
-          userInput: `${graphContext.userInput}\n\n补充信息：\n${clarificationText}`,
-          memory: {
-            ...graphContext.memory,
-            userConstraints: [
-              ...graphContext.memory.userConstraints,
-              clip(clarificationText, 500)
-            ],
-            revisionIntent: {
-              target: "all",
-              instruction: clip(clarificationText, 1000),
-              createdAt: now()
-            }
-          }
-        };
+        const nextContext = mergeClarificationIntoRunContext(graphContext, input.answers);
         const nextContextVersion = graphRun.context_version + 1;
         const nextMemory = normalizeMemory(
           run.conversation_id,
