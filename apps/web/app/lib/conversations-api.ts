@@ -82,8 +82,38 @@ export async function createUploadSession(input: CreateUploadSessionRequest): Pr
 export async function uploadResource(
   uploadSessionId: string,
   file: File,
-  source: "upload" | "paste" = "upload"
+  source: "upload" | "paste" = "upload",
+  onProgress?: (progress: number) => void
 ): Promise<ResourceSummary> {
+  if (onProgress) {
+    const accessToken = getAccessToken();
+    return new Promise<ResourceSummary>((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open("POST", new URL(`/upload-sessions/${uploadSessionId}/resources`, serviceUrl).toString());
+      request.setRequestHeader("content-type", file.type);
+      request.setRequestHeader("x-file-name", encodeURIComponent(file.name || "pasted-image"));
+      request.setRequestHeader("x-resource-source", source);
+      request.setRequestHeader("idempotency-key", crypto.randomUUID());
+      if (accessToken) request.setRequestHeader("authorization", `Bearer ${accessToken}`);
+      request.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
+      request.onerror = () => reject(new Error(`${file.name || "图片"}上传失败`));
+      request.onload = () => {
+        if (request.status >= 200 && request.status < 300) {
+          onProgress(100);
+          resolve(JSON.parse(request.responseText) as ResourceSummary);
+          return;
+        }
+        const error = JSON.parse(request.responseText || "null") as { message?: string } | null;
+        reject(new Error(error?.message ?? `${file.name || "图片"}上传失败`));
+      };
+      request.send(file);
+    });
+  }
+
   return readResponse(await serviceFetch(`/upload-sessions/${uploadSessionId}/resources`, {
     method: "POST",
     headers: {

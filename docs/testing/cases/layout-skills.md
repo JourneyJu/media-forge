@@ -23,3 +23,7 @@
 | LSK-011 | Skill 资源引用 | 生成结果引用二维码 | ArticleDocument 只包含受控 `assetKey`，renderer 解析为当前用户有权访问的 HTTPS URL。 |
 | LSK-012 | 二维码使用区域 | Skill 包含 `type=qrcode` 资源 | 二维码只出现在 CTA 或结尾区域。 |
 | LSK-013 | 版本冻结 | Run 创建后用户更新 Skill logo | 运行中的 Run 和历史文章继续使用创建时冻结的 Skill version。 |
+| LSK-014 | 账号级管理入口 | 打开右上角账号下拉并点击“我的 Skills” | 打开当前用户 Skills 管理页，账号下拉关闭，页面不切换 workspace。 |
+| LSK-015 | 输入区不承载管理 | 查看创作输入区和素材操作区 | 只展示上传资料、`@ Skill` / 私有 Skill 选择和发送按钮，不展示“管理 Skills”按钮。 |
+| LSK-016 | 管理页导入后停留 | 在“我的 Skills”页面粘贴有效 manifest 并导入 | 页面停留在管理页，刷新列表，新 Skill 出现在已安装或待补齐资源分组。 |
+| LSK-017 | 资源位完整度 | Skill manifest 声明 logo、二维码和封面，其中二维码未上传 | 管理页显示对应资源位缺失；该 Skill 不应出现在可用于新生成的 active `@` 菜单中。 |

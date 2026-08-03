@@ -32,13 +32,19 @@
 
 返回当前用户的私有 Skill 和安装状态。用于 Skill 管理页和输入框 `@` 菜单。
 
+Skill 管理页使用该接口渲染账号级“我的 Skills”列表、概览统计和未启用分组。输入框 `@` 菜单只能从该结果中过滤当前用户已安装且 `active` 的 Skill。
+
 ### `POST /user-skills/import`
 
 上传或粘贴 `manifest.json` 并导入用户私有 Skill。后端必须校验 manifest schema 和安全风险。导入成功后创建 `user_skills`、`user_skill_versions` 和 `user_skill_assets` 占位记录，第一版资源文件通过 asset 上传接口按 `assetKey` 补齐。后续可扩展为 `.mediaforge-skill.zip` 一次性导入。
 
+前端账号级“我的 Skills”页面第一版通过文本输入提交 manifest；后续支持 zip 包或拖拽上传时，可继续复用该导入语义或新增包上传接口。
+
 ### `POST /user-skills/:skillId/versions/:versionId/assets/:assetKey`
 
 上传 Skill 包中的 logo、二维码、品牌图等资源文件。请求体为图片二进制，`content-type` 必须是受支持的图片类型，`x-file-name` 传原始文件名。后端按当前用户、`skillId`、`versionId` 和 `assetKey` 校验归属。
+
+Skill 管理页按 manifest 中声明的 `assetKey` 展示资源位，例如 logo、二维码、封面、分隔图、固定 CTA 图和示例图；资源上传完成后必须刷新详情或列表状态。
 
 ### `GET /user-skills/:skillId`
 

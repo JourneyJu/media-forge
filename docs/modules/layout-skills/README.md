@@ -59,6 +59,20 @@ my-brand-style.mediaforge-skill.zip
 
 第一版用户私有 Skill 只允许一个 Run 选择一个主 Skill。后续可以扩展为主 Skill 加辅助 Skill 的组合模式。
 
+## 用户级管理入口
+
+用户私有 Skill 跟随用户账号，不跟随 workspace 或 conversation。前端入口放在右上角账号下拉菜单的“我的 Skills”中，创作输入区只保留本次生成使用的 `@ Skill` / 私有 Skill 选择控件。
+
+“我的 Skills”管理页面负责展示和操作当前登录用户的私有 Skill：
+
+- 概览：已安装数量、可用数量、当前使用数量。
+- 已安装列表：名称、别名、分类、状态、logo / 二维码 / 封面等资源完整度和操作入口。
+- 导入区：粘贴 `manifest.json`，后续扩展 zip 包或拖拽上传。
+- 资源区：按 `assetKey` 上传或检查 logo、二维码、封面、分隔图、固定 CTA 图和示例图。
+- 未启用列表：展示 disabled、removed、待补齐资源或未安装的 Skill，但不能用于新生成。
+
+管理页不得依赖当前 workspace。页面选择的“当前使用”只影响当前前端生成参数或用户偏好；后端仍以 Turn 请求中的结构化 `skillMentions` 和当前用户安装关系为准。
+
 ## `@` 引用规则
 
 - `@` 菜单只展示当前用户已安装且 active 的 Skill。
