@@ -11,13 +11,16 @@ Implemented（主链路，2026-07-27）。
 - Brief、Clarification、Title、Outline、Writer、ImagePlan、Review、Revision 和 Artifact Guard。
 - PostgreSQL 事件回放、SSE 对话消息、真实 Agent 任务卡、追问和结果通知。
 - 同一 Run 追问恢复，以及页面刷新后的消息、Run 和 Artifact 恢复。
-- 生产默认 `MODEL_MODE=gateway`；本地演示必须显式使用 `MODEL_MODE=demo`。
+- Model Gateway 和 Demo 模式分支已经存在。
+
+2026-08-03 生产核验发现：Compose 仍使用 `${MODEL_MODE:-demo}`，实际 service 和 worker 均运行在 Demo 模式。该项不满足本规格原定的生产门禁，按 `docs/specs/015-multi-agent-content-and-layout-quality.md` 修复前，不得将线上步骤卡视为真实模型多 Agent 质量验收结果。
 
 后续增强：
 
 - 尚未接入 LangGraph 原生 PostgreSQL checkpoint。当前使用版本化 `graph_runs.context_json` 恢复并重新执行图，业务事实不丢失，但可能重复早期节点调用。
 - SSE 当前每 250ms 从 PostgreSQL 补查，已支持断线续传；Redis Pub/Sub 通知仍是低延迟优化项。
 - MinIO 的 prompt 脱敏快照和 HTML 快照尚未接入。
+- 生产环境禁止 Demo、当前 Turn 与历史隔离、结构化正文和 LayoutPlan 待按规格 015 实施。
 
 ## 背景
 

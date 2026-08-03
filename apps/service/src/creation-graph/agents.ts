@@ -1,15 +1,21 @@
 import {
   articleDraftSchema,
   articleOutlineSchema,
+  contentPlanSchema,
   creativeBriefSchema,
   imagePlanSchema,
+  layoutPlanSchema,
+  materialAnalysisSchema,
   reviewReportSchema,
   titleCandidatesSchema,
   type ArticleDraft,
   type ArticleOutline,
+  type ContentPlan,
   type CreationGraphState,
   type CreativeBrief,
   type ImagePlan,
+  type LayoutPlan,
+  type MaterialAnalysis,
   type ReviewReport,
   type TitleCandidates
 } from "@mediaforge/contracts";
@@ -18,44 +24,64 @@ import {
   resolveModelGatewayConfig
 } from "../model-gateway";
 
+type SelectedSkills = CreationGraphState["selectedSkills"];
+
+interface MaterialInput {
+  resourceIds: string[];
+  memory?: CreationGraphState["memory"];
+  selectedSkills?: SelectedSkills;
+}
+
 interface BriefInput {
   userInput: string;
   resourceIds: string[];
   skillId: string;
-  selectedSkills?: CreationGraphState["selectedSkills"];
+  materials: MaterialAnalysis;
+  selectedSkills?: SelectedSkills;
   memory?: CreationGraphState["memory"];
+}
+
+interface PlanInput {
+  userInput: string;
+  brief: CreativeBrief;
+  materials: MaterialAnalysis;
+  selectedSkills?: SelectedSkills;
 }
 
 interface TitleInput {
   brief: CreativeBrief;
-  selectedSkills?: CreationGraphState["selectedSkills"];
+  contentPlan: ContentPlan;
+  selectedSkills?: SelectedSkills;
 }
 
-interface OutlineInput {
-  brief: CreativeBrief;
+interface OutlineInput extends TitleInput {
   titles: TitleCandidates;
-  selectedSkills?: CreationGraphState["selectedSkills"];
 }
 
-interface DraftInput {
-  brief: CreativeBrief;
-  titles: TitleCandidates;
+interface DraftInput extends OutlineInput {
   outline: ArticleOutline;
-  selectedSkills?: CreationGraphState["selectedSkills"];
   memory?: CreationGraphState["memory"];
 }
 
 interface ImagePlanInput {
   brief: CreativeBrief;
-  outline: ArticleOutline;
-  selectedSkills?: CreationGraphState["selectedSkills"];
+  contentPlan: ContentPlan;
+  draft: ArticleDraft;
+  materials: MaterialAnalysis;
+  selectedSkills?: SelectedSkills;
 }
 
-interface ReviewInput {
+interface LayoutInput {
   brief: CreativeBrief;
+  contentPlan: ContentPlan;
   draft: ArticleDraft;
   imagePlan: ImagePlan;
-  selectedSkills?: CreationGraphState["selectedSkills"];
+  selectedSkills?: SelectedSkills;
+}
+
+interface ReviewInput extends LayoutInput {
+  userInput: string;
+  layoutPlan: LayoutPlan;
 }
 
 interface RevisionInput extends ReviewInput {
@@ -64,127 +90,128 @@ interface RevisionInput extends ReviewInput {
 }
 
 export interface CreationAgents {
+  analyzeMaterials(input: MaterialInput): Promise<MaterialAnalysis>;
   buildBrief(input: BriefInput): Promise<CreativeBrief>;
+  createContentPlan(input: PlanInput): Promise<ContentPlan>;
   createTitles(input: TitleInput): Promise<TitleCandidates>;
   createOutline(input: OutlineInput): Promise<ArticleOutline>;
   writeDraft(input: DraftInput): Promise<ArticleDraft>;
   planImages(input: ImagePlanInput): Promise<ImagePlan>;
+  createLayout(input: LayoutInput): Promise<LayoutPlan>;
   reviewDraft(input: ReviewInput): Promise<ReviewReport>;
   reviseDraft(input: RevisionInput): Promise<ArticleDraft>;
-}
-
-function selectedTitle(titles: TitleCandidates) {
-  return titles.items.find((item) => item.id === titles.selectedId) ?? titles.items[0]!;
 }
 
 function clip(value: string, maxLength: number): string {
   return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
 }
 
+function selectedTitle(titles: TitleCandidates) {
+  return titles.items.find((item) => item.id === titles.selectedId) ?? titles.items[0]!;
+}
+
 function inferSubject(input: string): string {
   const topicMatch = input.match(/主题(?:是|为|：|:)\s*([^，。；;\n]+)/u);
   if (topicMatch?.[1]) return clip(topicMatch[1], 60);
-
-  if (input.includes("儿童摄影")) {
-    if (input.includes("团队") || input.includes("宣传")) return "儿童摄影团队品牌宣传";
-    return "儿童摄影";
-  }
-  if (input.includes("新品")) return "新品发布";
-  if (input.includes("活动")) return "活动宣传";
-
   const firstMeaningfulLine = input
     .split(/\r?\n/u)
     .map((line) => line.replace(/^\s*\d+[.、]\s*/u, "").trim())
     .find((line) => line.length >= 4 && !/^(帮我|请|要求如下)/u.test(line));
-
-  return clip(firstMeaningfulLine ?? "公众号内容创作", 60);
+  const factualSubject = (firstMeaningfulLine ?? "公众号内容创作")
+    .split(/[，。；;]\s*(?=请|帮我|根据|需要|要求)/u, 1)[0]!
+    .replace(/(?:请围绕|请根据|帮我|需要你|要求).*/u, "")
+    .trim();
+  return clip(factualSubject || "公众号内容创作", 60);
 }
 
 function inferAudience(input: string): string {
   const match = input.match(/面向(?:的是)?\s*([^，。；;\n]+)/u);
-  if (match?.[1]) return clip(match[1], 80);
-  if (input.includes("家长")) return "儿童家长";
-  if (input.includes("老客户")) return "老客户";
-  return "关注该主题的微信读者";
+  return clip(match?.[1] ?? "关注该主题的微信读者", 80);
+}
+
+function skillRules(skills: SelectedSkills | undefined): {
+  writing: string[];
+  forbidden: string[];
+  layout: string[];
+} {
+  const skill = skills?.[0];
+  if (!skill) return { writing: [], forbidden: [], layout: [] };
+  return {
+    writing: [
+      `Skill：${skill.alias ?? skill.name}`,
+      `语气：${skill.manifest.style.tone}`,
+      ...skill.manifest.writingRules
+    ],
+    forbidden: skill.manifest.forbiddenRules,
+    layout: [
+      ...(skill.manifest.style.primaryColor ? [`主色：${skill.manifest.style.primaryColor}`] : []),
+      ...skill.manifest.assets.map((asset) => `${asset.type}:${asset.key}:${asset.usage}`)
+    ]
+  };
+}
+
+function createDemoMaterials(input: MaterialInput): MaterialAnalysis {
+  const remembered = new Map((input.memory?.materialSummary ?? []).map((item) => [item.resourceId, item]));
+  return materialAnalysisSchema.parse({
+    items: input.resourceIds.map((resourceId) => remembered.get(resourceId) ?? {
+      resourceId,
+      type: "image",
+      description: "本轮用户上传素材",
+      suggestedUsage: "根据内容计划选择封面或对应章节使用",
+      quality: "medium"
+    })
+  });
 }
 
 function createDemoBrief(input: BriefInput): CreativeBrief {
-  const selectedSkill = input.selectedSkills?.[0];
-  const skillRules = selectedSkill
-    ? [
-        `使用用户私有 Skill：${selectedSkill.alias ?? selectedSkill.name}`,
-        `语气：${selectedSkill.manifest.style.tone}`,
-        ...selectedSkill.manifest.writingRules,
-        ...selectedSkill.manifest.assets.map((asset) => `资源 ${asset.key} 用途：${asset.usage}`)
-      ]
-    : [];
-  const forbiddenRules = selectedSkill?.manifest.forbiddenRules ?? [];
-
-  if (input.memory?.brief && input.userInput.trim().length <= 40) {
-    return creativeBriefSchema.parse({
-      ...input.memory.brief,
-      constraints: [
-        ...input.memory.brief.constraints,
-        input.userInput,
-        ...skillRules
-      ].slice(-20),
-      resourceIds: [...new Set([...input.memory.brief.resourceIds, ...input.resourceIds])],
-      skillId: input.skillId
-    });
-  }
-
-  const materialRequirements = input.userInput
-    .split(/\r?\n/u)
-    .map((line) => line.replace(/^\s*\d+[.、]\s*/u, "").trim())
-    .filter((line) => /素材|图片|分类|组图/u.test(line))
-    .slice(0, 10);
+  const rules = skillRules(input.selectedSkills);
+  const subject = inferSubject(input.userInput);
   const constraints = input.userInput
     .split(/\r?\n/u)
-    .map((line) => line.replace(/^\s*\d+[.、]\s*/u, "").trim())
+    .map((line) => line.trim())
     .filter((line) => /风格|语言|不要|避免|要求/u.test(line))
-    .slice(0, 10);
-
+    .slice(0, 12);
   return creativeBriefSchema.parse({
-    subject: inferSubject(input.userInput),
-    goal: input.userInput.includes("宣传") || input.userInput.includes("品牌")
-      ? "brand"
-      : input.userInput.includes("活动")
-        ? "event"
-        : "education",
+    subject,
+    goal: /获奖|活动/u.test(input.userInput) ? "event" : /宣传|品牌/u.test(input.userInput) ? "brand" : "story",
     audience: inferAudience(input.userInput),
-    contentType: input.userInput.includes("故事") ? "品牌故事" : "公众号图文",
-    campaignObject: input.userInput.includes("团队") ? "服务团队" : undefined,
-    tone: input.userInput.includes("温暖") || input.userInput.includes("自然") ? "warm" : "friendly",
-    storyAngle: input.userInput.includes("儿童")
-      ? "从孩子成长中的真实瞬间切入"
-      : "从读者熟悉的生活场景切入",
-    materialRequirements,
+    contentType: "公众号图文",
+    tone: /热烈|获奖|庆祝/u.test(input.userInput) ? "lively" : /温暖|自然/u.test(input.userInput) ? "warm" : "friendly",
+    storyAngle: `围绕“${subject}”的真实信息、现场细节和意义展开`,
+    materialRequirements: input.materials.items.map((item) => item.description).slice(0, 20),
     resourceIds: input.resourceIds,
-    constraints: [...constraints, ...skillRules].slice(0, 20),
-    prohibitedContent: ["用户原始指令", "AI 思考过程", "执行计划", "审校说明", ...forbiddenRules].slice(0, 20),
+    constraints: [...constraints, ...rules.writing].slice(0, 20),
+    prohibitedContent: ["旧主题内容", "用户指令", "AI 过程", ...rules.forbidden].slice(0, 20),
     skillId: input.skillId
   });
 }
 
-function createDemoTitles(brief: CreativeBrief): TitleCandidates {
-  const subject = brief.subject.replace(/团队品牌宣传|品牌宣传|宣传/gu, "").trim() || brief.subject;
-  const childTheme = subject.includes("儿童") || brief.audience.includes("家长");
-  const items = childTheme
-    ? [
-        { id: "story", title: "把童年留在镜头里", subtitle: "那些成长中的小事，值得被认真收藏", angle: "成长故事", audienceFit: 94, brandFit: 92, clickPotential: 90, riskFlags: [] },
-        { id: "scene", title: "孩子长大的瞬间，比想象中更快", subtitle: "用自然的影像记住真实童年", angle: "情绪共鸣", audienceFit: 96, brandFit: 88, clickPotential: 93, riskFlags: [] },
-        { id: "brand", title: "好的儿童摄影，不只是拍一张好看的照片", subtitle: "看见孩子，也看见每个家庭的故事", angle: "专业价值", audienceFit: 90, brandFit: 95, clickPotential: 87, riskFlags: [] }
-      ]
-    : [
-        { id: "value", title: `${clip(subject, 24)}，真正重要的是什么`, angle: "价值解释", audienceFit: 90, brandFit: 90, clickPotential: 86, riskFlags: [] },
-        { id: "scene", title: `从一个真实场景，重新认识${clip(subject, 20)}`, angle: "场景故事", audienceFit: 92, brandFit: 88, clickPotential: 89, riskFlags: [] },
-        { id: "guide", title: `关于${clip(subject, 22)}，这几件事值得认真说清楚`, angle: "实用指南", audienceFit: 88, brandFit: 90, clickPotential: 87, riskFlags: [] }
-      ];
+function createDemoContentPlan(input: PlanInput): ContentPlan {
+  const subject = input.brief.subject;
+  const assetRefs = input.materials.items.map((item) => item.resourceId);
+  return contentPlanSchema.parse({
+    angle: `从事件事实进入，解释${subject}的过程、亮点和意义`,
+    narrative: "事实开场，现场展开，价值收束，避免套用与主题无关的行业模板。",
+    requirements: input.brief.constraints.map((requirement) => ({ requirement, evidence: "在对应章节落实" })),
+    sections: [
+      { heading: "这件事为什么值得记录", purpose: "交代核心事实和读者关系", keyPoints: [subject], assetRefs: assetRefs.slice(0, 1) },
+      { heading: "现场与过程中的关键瞬间", purpose: "用素材和细节建立可信度", keyPoints: ["过程", "现场", "人物"], assetRefs: assetRefs.slice(1, 3) },
+      { heading: "荣誉背后的成长与意义", purpose: "提炼价值并完成情绪收束", keyPoints: ["意义", "感谢", "下一步"], assetRefs: assetRefs.slice(3) }
+    ],
+    callToAction: "邀请读者继续关注后续动态"
+  });
+}
 
+function createDemoTitles(input: TitleInput): TitleCandidates {
+  const subject = clip(input.brief.subject, 28);
   return titleCandidatesSchema.parse({
-    items,
-    selectedId: childTheme ? "story" : "scene",
-    selectionReason: "兼顾目标读者的情绪共鸣、品牌表达和微信阅读场景"
+    items: [
+      { id: "fact", title: `${subject}，这一刻值得被记住`, angle: "事件事实", audienceFit: 90, brandFit: 90, clickPotential: 88, riskFlags: [] },
+      { id: "scene", title: `从现场出发，重新认识${subject}`, angle: "现场叙事", audienceFit: 92, brandFit: 88, clickPotential: 90, riskFlags: [] },
+      { id: "meaning", title: `${subject}背后，比结果更动人的事`, angle: "价值意义", audienceFit: 89, brandFit: 92, clickPotential: 87, riskFlags: [] }
+    ],
+    selectedId: "fact",
+    selectionReason: "优先准确呈现本轮主题，同时保留公众号传播张力"
   });
 }
 
@@ -193,99 +220,116 @@ function createDemoOutline(input: OutlineInput): ArticleOutline {
   return articleOutlineSchema.parse({
     title: title.title,
     subtitle: title.subtitle,
-    openingHook: `从${input.brief.audience}熟悉的日常瞬间切入，让主题先与读者产生关系。`,
-    callToAction: "邀请读者进一步了解服务、查看案例或进行咨询。",
-    sections: [
-      {
-        title: "时间藏在那些不起眼的小事里",
-        objective: "用具体生活场景建立情绪连接",
-        storyBeat: "孩子不经意的表情和动作，成为家庭记忆的入口",
-        commercialGoal: "让读者理解记录的价值"
-      },
-      {
-        title: "自然，比标准答案更动人",
-        objective: "说明专业方法和品牌差异",
-        storyBeat: "从摆拍与真实互动的差别展开",
-        commercialGoal: "体现团队的观察力和专业能力"
-      },
-      {
-        title: "为每个家庭留下自己的故事",
-        objective: "收束品牌价值并引导行动",
-        storyBeat: "将一次拍摄连接到多年后的家庭回忆",
-        commercialGoal: "引导咨询和案例了解"
-      }
-    ]
+    openingHook: `先交代“${input.brief.subject}”的核心事实，再进入现场细节。`,
+    callToAction: input.contentPlan.callToAction,
+    sections: input.contentPlan.sections.map((section) => ({
+      title: section.heading,
+      objective: section.purpose,
+      storyBeat: section.keyPoints.join("、"),
+      commercialGoal: "准确表达本轮主题并服务读者理解"
+    }))
   });
 }
 
 function createDemoDraft(input: DraftInput): ArticleDraft {
   const title = selectedTitle(input.titles);
-  const audience = input.brief.audience;
-  const revisionInstruction = input.memory?.revisionIntent?.instruction;
-  const revisionLead = revisionInstruction
-    ? `根据本轮修改要求“${clip(revisionInstruction, 80)}”，在保留原有结构的基础上调整表达。`
-    : "";
+  const subject = input.brief.subject;
   return articleDraftSchema.parse({
     title: title.title,
     subtitle: title.subtitle,
-    paragraphs: [
-      `${revisionLead}孩子长大的速度，常常比我们意识到的更快。今天还会因为一颗糖开心很久，明天就开始有了自己的主意。对${audience}来说，真正舍不得忘记的，往往不是某个标准动作，而是这些带着性格和温度的小瞬间。`,
-      "镜头的意义，是让时间稍微慢下来。一个低头摆弄玩具的侧影，一次忍不住的大笑，或者牵着家人时下意识握紧的小手，都比刻意安排的表情更接近孩子本来的样子。",
-      "因此，儿童摄影首先需要的不是让孩子配合，而是让拍摄者愿意等待、观察并进入他们的节奏。熟悉之后的放松、玩耍时的专注、和家人互动时的依赖，才会自然地留在画面里。",
-      "不同孩子有不同的表达方式。有的明亮活泼，适合轻快的生活场景；有的安静细腻，更适合克制、干净的画面；还有一些家庭，希望把陪伴本身也放进照片，让影像成为一家人的共同记忆。",
-      "专业团队的价值，正是把这些差异看见。前期了解家庭的期待，拍摄中保留孩子的主动性，后期控制色彩和修饰的分寸，让照片好看，却依然能认出那个真实的孩子。",
-      "许多年后再翻开这些影像，人们记住的不会只是一次拍摄，而是孩子当时的神情、家人的陪伴，以及那个阶段独一无二的生活。好的记录不会替童年加上模板，它只是认真地把故事留下来。",
-      "每个家庭都值得拥有属于自己的成长记录。可以从喜欢的影像风格和孩子当下的状态开始，慢慢找到最适合你们的表达方式。"
-    ]
+    intro: `关于${subject}，最值得先说清楚的不是一句热闹的口号，而是这件事真实发生的经过，以及它为什么值得被记录。`,
+    sections: input.contentPlan.sections.map((section, index) => ({
+      heading: section.heading,
+      purpose: section.purpose,
+      paragraphs: [
+        index === 0
+          ? `${subject}构成了这篇文章的事实起点。围绕时间、人物和结果展开，读者才能快速理解事件本身。`
+          : index === 1
+            ? `真正让内容成立的是现场细节。把过程、动作和人物关系写具体，素材就不再只是装饰，而成为叙事证据。`
+            : `结果之外，更重要的是这段经历带来的成长、协作和新的期待。文章在这里完成价值收束。`,
+        `这一部分围绕${section.keyPoints.join("、")}展开，并只使用与本轮主题直接相关的信息。`
+      ],
+      assetRefs: section.assetRefs
+    })),
+    conclusion: `一次值得记录的${subject}，既有清晰的事实，也有属于参与者的情感和意义。`,
+    callToAction: input.contentPlan.callToAction
   });
 }
 
 function createDemoImagePlan(input: ImagePlanInput): ImagePlan {
+  const refs = input.materials.items.map((item) => item.resourceId);
+  const skillAssets = input.selectedSkills?.flatMap((skill) => skill.assets) ?? [];
   return imagePlanSchema.parse({
     items: [
-      {
-        placement: "cover",
-        description: "选择一张主体清晰、表情自然、留有标题空间的儿童照片作为封面。",
-        resourceId: input.brief.resourceIds[0]
-      },
-      ...input.outline.sections.slice(0, 3).map((section, index) => ({
-        placement: "section" as const,
-        description: `用于“${section.title}”章节，优先选择第 ${index + 1} 类素材中能体现真实互动的照片。`,
-        resourceId: input.brief.resourceIds[index + 1]
+      { placement: "cover", description: `选择最能代表“${input.brief.subject}”的清晰素材作为封面`, resourceId: refs[0] },
+      ...input.draft.sections.flatMap((section, index) => {
+        const resourceId = section.assetRefs[0] ?? refs[index + 1];
+        return resourceId ? [{ placement: "section" as const, description: `用于“${section.heading}”并作为内容证据`, resourceId }] : [];
+      }),
+      ...skillAssets.map((asset) => ({
+        placement: asset.type === "qrcode" || asset.type === "logo" ? "ending" as const : "section" as const,
+        description: asset.usage,
+        assetKey: asset.key
       }))
     ]
   });
 }
 
-function createDemoReview(input: ReviewInput): ReviewReport {
-  const text = [input.draft.title, ...input.draft.paragraphs].join("\n");
-  const issues = [];
-  if (/帮我|要求如下|我会先|执行计划|作为AI|作为 AI/u.test(text)) {
-    issues.push({
-      code: "PROCESS_COPY_LEAK",
-      severity: "error" as const,
-      target: "body" as const,
-      instruction: "删除用户指令或 AI 执行过程，只保留可发布正文。"
-    });
-  }
-  if (input.draft.paragraphs.length < 5) {
-    issues.push({
-      code: "BODY_TOO_THIN",
-      severity: "error" as const,
-      target: "body" as const,
-      instruction: "补充故事场景、专业价值和行动引导。"
-    });
-  }
+function createDemoLayout(input: LayoutInput): LayoutPlan {
+  const celebratory = /获奖|庆祝|荣誉|舞台/u.test(input.brief.subject);
+  const skill = input.selectedSkills?.[0];
+  const primary = skill?.manifest.style.primaryColor;
+  return layoutPlanSchema.parse({
+    theme: celebratory ? "celebration" : "editorial",
+    palette: {
+      primary: primary && /^#[0-9a-fA-F]{6}$/u.test(primary) ? primary : celebratory ? "#C51D5D" : "#16745B",
+      accent: celebratory ? "#F2B134" : "#E7654B",
+      text: "#20252B",
+      surface: "#F7F8F6"
+    },
+    titleTreatment: celebratory ? "poster" : "left-editorial",
+    introTreatment: "highlight-panel",
+    sectionTreatment: celebratory ? "labelled" : "minimal",
+    imageTreatment: celebratory ? "full-width" : "framed",
+    blocks: [
+      { kind: "title" },
+      { kind: "intro" },
+      ...input.draft.sections.flatMap((section, sectionIndex) => [
+        { kind: "section" as const, sectionIndex },
+        ...section.assetRefs.slice(0, 1).map((assetRef) => ({ kind: "image" as const, sectionIndex, assetRef }))
+      ]),
+      { kind: "cta" }
+    ]
+  });
+}
 
+function draftText(draft: ArticleDraft): string {
+  return [draft.title, draft.intro, ...draft.sections.flatMap((section) => [section.heading, ...section.paragraphs]), draft.conclusion, draft.callToAction ?? ""].join("\n");
+}
+
+function createDemoReview(input: ReviewInput): ReviewReport {
+  const text = draftText(input.draft);
+  const issues = [];
+  if (/帮我|要求如下|我会先|执行计划|作为\s*AI/u.test(text)) {
+    issues.push({ code: "PROCESS_COPY_LEAK", severity: "error" as const, target: "body" as const, instruction: "删除用户指令和 AI 过程。" });
+  }
+  if (!text.includes(clip(input.brief.subject, 20))) {
+    issues.push({ code: "SUBJECT_MISMATCH", severity: "error" as const, target: "brief" as const, instruction: "正文必须围绕本轮主题重写。" });
+  }
+  const passed = issues.length === 0;
   return reviewReportSchema.parse({
-    passed: issues.every((issue) => issue.severity !== "error"),
+    passed,
     scores: {
-      story: 90,
-      commercial: 86,
-      audienceFit: 92,
-      naturalness: issues.length === 0 ? 94 : 70,
-      wechatReadability: 91,
-      factualRisk: 95
+      story: 88,
+      commercial: 84,
+      audienceFit: 90,
+      naturalness: passed ? 92 : 65,
+      wechatReadability: 90,
+      factualRisk: 92,
+      subjectAlignment: passed ? 96 : 50,
+      requirementCoverage: 88,
+      contentDepth: 86,
+      layoutFit: 92
     },
     issues
   });
@@ -293,107 +337,106 @@ function createDemoReview(input: ReviewInput): ReviewReport {
 
 function createDemoAgents(): CreationAgents {
   return {
-    async buildBrief(input) {
-      return createDemoBrief(input);
-    },
-    async createTitles({ brief }) {
-      return createDemoTitles(brief);
-    },
-    async createOutline(input) {
-      return createDemoOutline(input);
-    },
-    async writeDraft(input) {
-      return createDemoDraft(input);
-    },
-    async planImages(input) {
-      return createDemoImagePlan(input);
-    },
-    async reviewDraft(input) {
-      return createDemoReview(input);
-    },
+    async analyzeMaterials(input) { return createDemoMaterials(input); },
+    async buildBrief(input) { return createDemoBrief(input); },
+    async createContentPlan(input) { return createDemoContentPlan(input); },
+    async createTitles(input) { return createDemoTitles(input); },
+    async createOutline(input) { return createDemoOutline(input); },
+    async writeDraft(input) { return createDemoDraft(input); },
+    async planImages(input) { return createDemoImagePlan(input); },
+    async createLayout(input) { return createDemoLayout(input); },
+    async reviewDraft(input) { return createDemoReview(input); },
     async reviseDraft(input) {
-      const cleaned = input.draft.paragraphs
-        .map((paragraph) => paragraph.replace(/帮我|要求如下|我会先|执行计划|作为\s*AI/gu, "").trim())
-        .filter(Boolean);
       return articleDraftSchema.parse({
         ...input.draft,
-        paragraphs: cleaned.length >= 3 ? cleaned : createDemoDraft({
-          brief: input.brief,
-          titles: createDemoTitles(input.brief),
-          outline: createDemoOutline({
-            brief: input.brief,
-            titles: createDemoTitles(input.brief)
-          })
-        }).paragraphs
+        sections: input.draft.sections.map((section) => ({
+          ...section,
+          paragraphs: section.paragraphs.map((paragraph) => paragraph.replace(/帮我|要求如下|我会先|执行计划|作为\s*AI/gu, "").trim()).filter(Boolean)
+        }))
       });
     }
   };
 }
 
 function createGatewayAgents(context: { userId: string; runId?: string }): CreationAgents {
-  async function generate<T>(
-    options: Parameters<typeof generateStructuredJsonWithGateway<T>>[1]
-  ): Promise<T> {
+  async function generate<T>(options: Parameters<typeof generateStructuredJsonWithGateway<T>>[1]): Promise<T> {
     const config = await resolveModelGatewayConfig("text_generation");
     return generateStructuredJsonWithGateway(config, {
       ...options,
-      usage: {
-        ...context,
-        modelConfigId: config.modelConfigId,
-        routeKey: "text_generation"
-      }
+      usage: { ...context, modelConfigId: config.modelConfigId, routeKey: "text_generation" }
     });
   }
 
   return {
+    analyzeMaterials: (input) => generate({
+      agentName: "MaterialAgent",
+      systemPrompt: "根据本轮资源 ID、已有素材摘要和 Skill 品牌资源生成 MaterialAnalysis。不得虚构图片内容；无法识别时标记 unknown。",
+      input,
+      schema: materialAnalysisSchema,
+      temperature: 0.1
+    }),
     buildBrief: (input) => generate({
       agentName: "BriefAgent",
-      systemPrompt: "将用户创作需求提取为结构化 CreativeBrief。subject 必须是简短主题，不能复制用户完整指令。",
+      systemPrompt: "只以本轮 userInput 为最高优先级，将需求提取为 CreativeBrief。subject 必须准确概括当前主题，不得沿用记忆中的旧主题；逐项保留用户约束和 Skill 规则。",
       input,
       schema: creativeBriefSchema,
       temperature: 0.2
     }),
+    createContentPlan: (input) => generate({
+      agentName: "ContentPlannerAgent",
+      systemPrompt: "先做内容设计再写正文。输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。禁止套用无关行业模板。",
+      input,
+      schema: contentPlanSchema,
+      temperature: 0.45
+    }),
     createTitles: (input) => generate({
       agentName: "TitleAgent",
-      systemPrompt: "基于 CreativeBrief 生成 3 到 5 个公众号标题候选，评分并自动选择最合适的一项。标题不得包含用户指令。",
+      systemPrompt: "基于当前 Brief 和 ContentPlan 生成 3 到 5 个准确且有传播力的标题并选出一项。不得包含旧主题或用户指令。",
       input,
       schema: titleCandidatesSchema,
-      temperature: 0.7
+      temperature: 0.65
     }),
     createOutline: (input) => generate({
       agentName: "OutlineAgent",
-      systemPrompt: "设计兼具故事性和商业表达的公众号文章结构，明确每节故事节拍和商业目标。",
+      systemPrompt: "把 ContentPlan 和选定标题落实为公众号提纲，每节必须有独立目标、故事节拍和表达目标，不得改变当前主题。",
       input,
       schema: articleOutlineSchema,
-      temperature: 0.5
+      temperature: 0.4
     }),
     writeDraft: (input) => generate({
       agentName: "WriterAgent",
-      systemPrompt: "根据 Brief、选定标题和 Outline 写可直接发布的中文正文。不得输出指令、计划、审校说明或 AI 过程。",
+      systemPrompt: "严格按照 Brief、ContentPlan 和 Outline 写结构化中文正文。每个 section 明确 purpose、段落和 assetRefs，使用具体事实与场景，禁止输出指令、计划、审校说明、AI 过程或无关旧主题。",
       input,
       schema: articleDraftSchema,
-      temperature: 0.7
+      temperature: 0.65
     }),
     planImages: (input) => generate({
       agentName: "ImagePlannerAgent",
-      systemPrompt: "规划封面和正文图片位置，并优先映射已有 resourceIds。",
+      systemPrompt: "根据 MaterialAnalysis、ContentPlan 和结构化正文规划封面与章节图片。只引用输入中存在的 resourceId 或 Skill assetKey，不得虚构 URL。",
       input,
       schema: imagePlanSchema,
-      temperature: 0.4
+      temperature: 0.3
+    }),
+    createLayout: (input) => generate({
+      agentName: "LayoutAgent",
+      systemPrompt: "根据当前主题、内容密度、图片计划和 Skill 生成受控 LayoutPlan。版式必须服务当前主题；只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
+      input,
+      schema: layoutPlanSchema,
+      temperature: 0.5
     }),
     reviewDraft: (input) => generate({
       agentName: "ReviewerAgent",
-      systemPrompt: "审校故事性、商业表达、受众匹配、自然度、微信阅读体验和事实风险。有严重问题必须 passed=false。",
+      systemPrompt: "审校主题一致性、用户要求覆盖、内容深度、素材匹配、Skill 合规、版式适配、微信阅读和事实风险。发现旧主题、错图或套用旧版式时必须 passed=false，并把 target 指向 brief、plan、body、image 或 layout。",
       input,
       schema: reviewReportSchema,
-      temperature: 0.2
+      temperature: 0.15
     }),
     reviseDraft: (input) => generate({
       agentName: "RevisionAgent",
-      systemPrompt: "只根据 ReviewReport 定向修订正文，保留选定标题，不输出修改说明。",
+      systemPrompt: "只处理 ReviewReport 中 target=body/title/cta 的问题，保持已确认主题和未要求修改的章节。结构或主题问题不得用正文润色掩盖。",
       input,
       schema: articleDraftSchema,
-      temperature: 0.5
+      temperature: 0.4
     })
   };
 }

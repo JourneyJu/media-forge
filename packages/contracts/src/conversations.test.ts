@@ -12,8 +12,22 @@ describe("conversation lifecycle contracts", () => {
 
     expect(result.content).toBe("帮我写一篇面向儿童家长的摄影团队介绍");
     expect(result.resourceIds).toEqual(["resource-001"]);
+    expect(result.inheritedResourceIds).toEqual([]);
+    expect(result.creationMode).toBe("auto");
     expect(result.layoutSkillId).toBe("auto");
     expect(result.maxSteps).toBe(12);
+  });
+
+  it("accepts an explicit new creation with selected inherited resources", () => {
+    const result = createConversationTurnRequestSchema.parse({
+      idempotencyKey: "turn-request-003",
+      content: "换一个主题，写舞蹈获奖活动",
+      creationMode: "new",
+      inheritedResourceIds: ["brand-logo"]
+    });
+
+    expect(result.creationMode).toBe("new");
+    expect(result.inheritedResourceIds).toEqual(["brand-logo"]);
   });
 
   it("does not accept an empty first prompt", () => {

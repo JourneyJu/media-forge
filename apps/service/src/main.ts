@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
 import { startCreationRuntime, stopCreationRuntime } from "./creation-graph/runtime";
 import { closeHttpServices, handleRequest } from "./http";
+import { assertProductionModelMode } from "./model-mode";
+
+assertProductionModelMode();
 
 const port = Number(process.env.PORT ?? 4000);
 

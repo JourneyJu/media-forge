@@ -415,7 +415,7 @@ export function createConversationStore(options: ConversationStoreOptions = {}) 
           workspaceId: conversation.workspaceId ?? "local-user",
           contextVersion,
           graphName: "wechat_article_creation" as const,
-          graphVersion: "2026-07-27"
+          graphVersion: "2026-08-03"
         };
         await options.persistence.saveConversation(
           conversation,
@@ -425,6 +425,10 @@ export function createConversationStore(options: ConversationStoreOptions = {}) 
         await options.persistence.createQueuedRun(run, {
           userInput: latestUserMessage.content,
           resourceIds: resources.get(conversationId)?.map((resource) => resource.assetId) ?? [],
+          currentInstruction: latestUserMessage.content,
+          creationMode: "new",
+          currentResourceIds: resources.get(conversationId)?.map((resource) => resource.assetId) ?? [],
+          inheritedResourceIds: [],
           skillId: input.layoutSkillId,
           selectedSkills: [],
           maxSteps: input.maxSteps

@@ -92,7 +92,7 @@ services:
       S3_ACCESS_KEY: ${MINIO_ROOT_USER}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_FORCE_PATH_STYLE: "true"
-      MODEL_MODE: ${MODEL_MODE:-demo}
+      MODEL_MODE: ${MODEL_MODE:?MODEL_MODE must be explicitly configured for production}
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY}
     command: ["pnpm", "--filter", "@mediaforge/service", "start"]
     expose:
@@ -125,7 +125,7 @@ services:
       S3_ACCESS_KEY: ${MINIO_ROOT_USER}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_FORCE_PATH_STYLE: "true"
-      MODEL_MODE: ${MODEL_MODE:-demo}
+      MODEL_MODE: ${MODEL_MODE:?MODEL_MODE must be explicitly configured for production}
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY}
       CREATION_RUN_WORKER_CONCURRENCY: ${CREATION_RUN_WORKER_CONCURRENCY:-2}
     command: ["pnpm", "--filter", "@mediaforge/worker", "start"]

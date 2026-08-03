@@ -18,6 +18,12 @@ Creation Graph 模块负责公众号创作任务的多 Agent 编排。它使用 
 | RunEvent | 已实现 | PostgreSQL 递增事件号、SSE 回放和定时补查 |
 | Artifact Builder Guard | 已实现 | 阻止原始提示词和过程文本污染最终正文 |
 | Clarification resume | 已实现 | 同一 Run 使用版本化上下文恢复；原生 LangGraph checkpoint 待增强 |
+| 真实生产 Agent 门禁 | 已实现 | production 仅允许显式 `MODEL_MODE=gateway`，服务和 Worker 启动时共同校验。 |
+| 当前 Turn 与历史隔离 | 已实现 | Run 只接收当前指令、当前资源和显式继承资源。 |
+| 结构化 ContentPlan / ArticleDraft | 已实现 | ContentPlan 和按章节 ArticleDraft 驱动内容与图片映射。 |
+| LayoutPlan 与主题化排版 | 已实现 | 受控 LayoutPlan 驱动可信 Renderer，前端直接展示 Renderer 产物。 |
+| 图片视觉分析 | 已实现 | Worker 从对象存储读取本轮图片，经多模态路由生成描述、OCR 和用途建议；失败时标记低质量素材。 |
+| Skill 品牌资源解析 | 已实现 | ImagePlan 只引用 `assetKey`，Artifact Builder 校验冻结版本并解析 Logo、二维码和 GIF。 |
 
 旧同步 `agent-runs` 只保留兼容代码，不再承担 Conversation 新 Run 的主链路。
 
@@ -30,6 +36,8 @@ Creation Graph 模块负责公众号创作任务的多 Agent 编排。它使用 
 - 写入 `AgentTask` 和 `AgentOutput`。
 - 在需要用户补充信息时进入 `waiting_clarification`。
 - 在完成后调用 Artifact Builder 保存最终公众号产物。
+- 保证每个用户可见步骤对应真实 AgentTask 和 AgentOutput，不生成伪步骤。
+- 根据 Reviewer 的问题类型回退 Brief、Planner、Writer、ImagePlan 或 Layout 节点。
 
 ## 不负责
 
@@ -88,14 +96,17 @@ apps/worker/
 | 节点 | Agent | 说明 |
 | --- | --- | --- |
 | `brief` | Brief Agent | 将用户输入、资源和 Skill 转为 `CreativeBrief`。 |
+| `material` | Material Agent | 提取图片、GIF、文档和品牌资源的场景、OCR、质量与建议用途。 |
+| `planner` | Content Planner Agent | 生成叙事主线、章节目标、要求覆盖和素材映射。 |
 | `clarification` | Clarification Agent | 判断是否需要向用户追问。 |
 | `title` | Title Agent | 生成标题、备选标题和副标题。 |
 | `outline` | Outline Agent | 生成文章结构和章节目标。 |
 | `writer` | Writer Agent | 生成结构化正文草稿。 |
 | `image_plan` | Image Planner Agent | 规划封面、正文图、组图和素材使用。 |
+| `layout` | Layout Agent | 根据主题、正文、素材和 Skill 生成受控 `LayoutPlan`。 |
 | `review` | Reviewer Agent | 检查故事性、商业表达、事实风险和微信阅读体验。 |
 | `revision` | Revision Agent | 根据审阅报告修订草稿。 |
-| `render` | WeChat Renderer Agent | 生成微信兼容内容结构和 HTML。 |
+| `render` | Trusted WeChat Renderer | 将受控 `LayoutPlan` 映射为微信兼容 HTML；它不是自由文本 Agent。 |
 | `artifact` | Artifact Builder | 校验并保存 Artifact 和 ArticleVersion。 |
 
 ## 会话记忆输入
@@ -106,7 +117,9 @@ Working Memory 可以提供 brief、上一版标题、提纲摘要、素材摘�
 
 当 Run 完成后，Worker 通过 `AgentOutput` 和 `Artifact` 产出可用于更新 Working Memory 的结构化结果。最终公众号正文仍以 `Artifact` / `ArticleDocument` 为事实源，Working Memory 不得替代最终正文。
 
-详细方案见 `docs/specs/013-conversation-session-memory.md`。
+最新 Turn 必须作为本轮唯一原始指令。历史消息不得拼接为本轮 prompt；历史只通过 Working Memory 摘要和显式继承资源进入 Run。`new` 模式清空旧创作状态，`revise` 模式才允许读取 `lastArtifactId`。
+
+详细方案见 `docs/specs/013-conversation-session-memory.md` 和 `docs/specs/015-multi-agent-content-and-layout-quality.md`。
 
 ## 状态流
 
@@ -166,6 +179,8 @@ Artifact Builder 必须阻止以下内容进入最终公众号正文：
 - 审阅报告。
 - 内部 prompt。
 - 未经 schema 校验的自然语言草稿。
+- 模型生成的任意 HTML、CSS、JavaScript 或事件属性。
+- 未通过 owner、version、asset type 和用途校验的 Skill 资源。
 
 ## 与前端交互的关系
 
@@ -190,10 +205,15 @@ POST /runs/:id/clarifications
 - RunEvent 可恢复。
 - Worker 重试不会重复创建 Artifact。
 - 最终公众号正文不混入过程信息。
+- 新主题不继承旧主题、旧素材或旧 LayoutPlan。
+- 生产模型不可用时明确失败，不返回 Demo 文章。
+- Reviewer 未通过时不创建 Artifact，并回退到对应问题节点。
 
 ## 实施路由
 
 - 初始规格：`docs/specs/004-langgraph-multi-agent-creation-system.md`
 - 生产化补全规格：`docs/specs/006-langgraph-multi-agent-production-completion.md`
 - 会话级上下文管理规格：`docs/specs/013-conversation-session-memory.md`
+- 内容与排版质量重构：`docs/specs/015-multi-agent-content-and-layout-quality.md`
+- 结构化渲染决策：`docs/adr/010-structured-content-and-layout-plan.md`
 - 当前 L 级计划：`.plan/20260727-langgraph-multi-agent-production-completion.md`

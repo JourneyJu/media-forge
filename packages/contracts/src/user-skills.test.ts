@@ -68,7 +68,7 @@ describe("user private skill contracts", () => {
         style: { tone: "温暖" },
         assets: [{ key: "consult_qrcode", type: "qrcode", usage: "CTA 引导扫码咨询" }]
       },
-      assets: [{ key: "consult_qrcode", type: "qrcode", usage: "CTA 引导扫码咨询", objectKey: "users/u/skills/s/assets/a/original" }]
+      assets: [{ id: "asset_1", key: "consult_qrcode", type: "qrcode", usage: "CTA 引导扫码咨询", objectKey: "users/u/skills/s/assets/a/original" }]
     });
 
     expect(resolved.assets[0]?.key).toBe("consult_qrcode");

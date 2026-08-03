@@ -4,9 +4,12 @@ import type {
   ArticleDraft,
   ArticleOutline,
   ClarificationRequest,
+  ContentPlan,
   CreationGraphState,
   CreativeBrief,
   ImagePlan,
+  LayoutPlan,
+  MaterialAnalysis,
   ReviewReport,
   TitleCandidates
 } from "@mediaforge/contracts";
@@ -46,12 +49,15 @@ const GraphAnnotation = Annotation.Root({
     default: () => []
   }),
   memory: Annotation<CreationGraphState["memory"] | undefined>(),
+  materials: Annotation<MaterialAnalysis | undefined>(),
   brief: Annotation<CreativeBrief | undefined>(),
+  contentPlan: Annotation<ContentPlan | undefined>(),
   clarification: Annotation<ClarificationRequest | undefined>(),
   titles: Annotation<TitleCandidates | undefined>(),
   outline: Annotation<ArticleOutline | undefined>(),
   draft: Annotation<ArticleDraft | undefined>(),
   imagePlan: Annotation<ImagePlan | undefined>(),
+  layoutPlan: Annotation<LayoutPlan | undefined>(),
   reviewReports: Annotation<ReviewReport[]>({
     reducer: (_current, update) => update,
     default: () => []
@@ -99,6 +105,16 @@ function requireBrief(state: CreationGraphState): CreativeBrief {
   return state.brief;
 }
 
+function requireMaterials(state: CreationGraphState): MaterialAnalysis {
+  if (!state.materials) throw new Error("GRAPH_MATERIALS_REQUIRED");
+  return state.materials;
+}
+
+function requireContentPlan(state: CreationGraphState): ContentPlan {
+  if (!state.contentPlan) throw new Error("GRAPH_CONTENT_PLAN_REQUIRED");
+  return state.contentPlan;
+}
+
 function requireTitles(state: CreationGraphState): TitleCandidates {
   if (!state.titles) throw new Error("GRAPH_TITLES_REQUIRED");
   return state.titles;
@@ -119,19 +135,46 @@ function requireImagePlan(state: CreationGraphState): ImagePlan {
   return state.imagePlan;
 }
 
-function routeAfterClarification(state: CreationGraphState): "title_node" | typeof END {
-  return state.status === "waiting_clarification" ? END : "title_node";
+function requireLayoutPlan(state: CreationGraphState): LayoutPlan {
+  if (!state.layoutPlan) throw new Error("GRAPH_LAYOUT_PLAN_REQUIRED");
+  return state.layoutPlan;
 }
 
-function routeAfterReview(state: CreationGraphState): "revision_node" | "artifact_node" | "fail_node" {
+function routeAfterClarification(state: CreationGraphState): "planner_node" | typeof END {
+  return state.status === "waiting_clarification" ? END : "planner_node";
+}
+
+function routeAfterReview(
+  state: CreationGraphState
+): "brief_node" | "planner_node" | "revision_node" | "image_plan_node" | "layout_node" | "artifact_node" | "fail_node" {
   const report = state.reviewReports.at(-1);
   if (report?.passed) return "artifact_node";
-  return state.revisionCount < state.maxRevisionCount ? "revision_node" : "fail_node";
+  if (state.revisionCount >= state.maxRevisionCount) return "fail_node";
+  const targets = new Set(report?.issues.filter((issue) => issue.severity === "error").map((issue) => issue.target));
+  if (targets.has("brief")) return "brief_node";
+  if (targets.has("plan") || targets.has("outline")) return "planner_node";
+  if (targets.has("image")) return "image_plan_node";
+  if (targets.has("layout")) return "layout_node";
+  return "revision_node";
 }
 
 export function createWechatArticleGraph(options: GraphOptions = {}) {
   const agents = options.agents ?? createCreationAgents();
   const observer = options.observer;
+
+  const materialNode = createObservedNode(
+    observer,
+    "material",
+    "素材理解",
+    async (state) => ({
+      materials: await agents.analyzeMaterials({
+        resourceIds: state.resourceIds,
+        memory: state.memory,
+        selectedSkills: state.selectedSkills
+      })
+    }),
+    (update) => `已完成 ${update.materials?.items.length ?? 0} 项素材摘要`
+  );
 
   const briefNode = createObservedNode(
     observer,
@@ -142,12 +185,28 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         userInput: state.userInput,
         resourceIds: state.resourceIds,
         skillId: state.skillId,
+        materials: requireMaterials(state),
         selectedSkills: state.selectedSkills,
         memory: state.memory
       }),
       status: "running"
     }),
     (update) => `已识别主题“${update.brief?.subject ?? ""}”和目标读者`
+  );
+
+  const plannerNode = createObservedNode(
+    observer,
+    "planner",
+    "内容策划",
+    async (state) => ({
+      contentPlan: await agents.createContentPlan({
+        userInput: state.userInput,
+        brief: requireBrief(state),
+        materials: requireMaterials(state),
+        selectedSkills: state.selectedSkills
+      })
+    }),
+    (update) => `已完成 ${update.contentPlan?.sections.length ?? 0} 个章节的内容设计`
   );
 
   const clarificationNode = createObservedNode(
@@ -179,7 +238,11 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "title",
     "标题策划",
     async (state) => ({
-      titles: await agents.createTitles({ brief: requireBrief(state), selectedSkills: state.selectedSkills })
+      titles: await agents.createTitles({
+        brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
+        selectedSkills: state.selectedSkills
+      })
     }),
     (update) => `已推荐《${update.titles ? selectedTitle(update.titles) : ""}》`
   );
@@ -191,6 +254,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => ({
       outline: await agents.createOutline({
         brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
         titles: requireTitles(state),
         selectedSkills: state.selectedSkills
       })
@@ -205,13 +269,14 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => ({
       draft: await agents.writeDraft({
         brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
         titles: requireTitles(state),
         outline: requireOutline(state),
         selectedSkills: state.selectedSkills,
         memory: state.memory
       })
     }),
-    (update) => `已完成 ${update.draft?.paragraphs.length ?? 0} 个正文段落`
+    (update) => `已完成 ${update.draft?.sections.length ?? 0} 个正文章节`
   );
 
   const imagePlanNode = createObservedNode(
@@ -221,11 +286,29 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => ({
       imagePlan: await agents.planImages({
         brief: requireBrief(state),
-        outline: requireOutline(state),
+        contentPlan: requireContentPlan(state),
+        draft: requireDraft(state),
+        materials: requireMaterials(state),
         selectedSkills: state.selectedSkills
       })
     }),
     (update) => `已规划 ${update.imagePlan?.items.length ?? 0} 个图片位置`
+  );
+
+  const layoutNode = createObservedNode(
+    observer,
+    "layout",
+    "版式设计",
+    async (state) => ({
+      layoutPlan: await agents.createLayout({
+        brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
+        draft: requireDraft(state),
+        imagePlan: requireImagePlan(state),
+        selectedSkills: state.selectedSkills
+      })
+    }),
+    (update) => `已生成 ${update.layoutPlan?.theme ?? ""} 主题版式`
   );
 
   const reviewNode = createObservedNode(
@@ -234,13 +317,17 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "质量审校",
     async (state) => {
       const report = await agents.reviewDraft({
+        userInput: state.userInput,
         brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
+        layoutPlan: requireLayoutPlan(state),
         selectedSkills: state.selectedSkills
       });
       return {
-        reviewReports: [...state.reviewReports, report]
+        reviewReports: [...state.reviewReports, report],
+        revisionCount: report.passed ? state.revisionCount : state.revisionCount + 1
       };
     },
     (update) => update.reviewReports?.at(-1)?.passed ? "故事性、商业表达和微信阅读检查通过" : "发现问题，准备定向修订"
@@ -253,13 +340,16 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => ({
       draft: await agents.reviseDraft({
         brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
+        layoutPlan: requireLayoutPlan(state),
+        userInput: state.userInput,
         report: state.reviewReports.at(-1)!,
         selectedSkills: state.selectedSkills,
         memory: state.memory
       }),
-      revisionCount: state.revisionCount + 1
+      revisionCount: state.revisionCount
     }),
     () => "已按审校问题完成定向修订"
   );
@@ -271,10 +361,14 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     async (state) => {
       const result = buildArticleDocument({
         userInput: state.userInput,
+        brief: requireBrief(state),
+        contentPlan: requireContentPlan(state),
         titles: requireTitles(state),
         outline: requireOutline(state),
         draft: requireDraft(state),
-        imagePlan: requireImagePlan(state)
+        imagePlan: requireImagePlan(state),
+        layoutPlan: requireLayoutPlan(state),
+        selectedSkills: state.selectedSkills
       });
       return {
         finalDocument: result.document,
@@ -294,25 +388,31 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
   );
 
   return new StateGraph(GraphAnnotation)
+    .addNode("material_node", materialNode)
     .addNode("brief_node", briefNode)
+    .addNode("planner_node", plannerNode)
     .addNode("clarification_node", clarificationNode)
     .addNode("title_node", titleNode)
     .addNode("outline_node", outlineNode)
     .addNode("writer_node", writerNode)
     .addNode("image_plan_node", imagePlanNode)
+    .addNode("layout_node", layoutNode)
     .addNode("review_node", reviewNode)
     .addNode("revision_node", revisionNode)
     .addNode("artifact_node", artifactNode)
     .addNode("fail_node", failNode)
-    .addEdge(START, "brief_node")
+    .addEdge(START, "material_node")
+    .addEdge("material_node", "brief_node")
     .addEdge("brief_node", "clarification_node")
     .addConditionalEdges("clarification_node", routeAfterClarification)
+    .addEdge("planner_node", "title_node")
     .addEdge("title_node", "outline_node")
     .addEdge("outline_node", "writer_node")
     .addEdge("writer_node", "image_plan_node")
-    .addEdge("image_plan_node", "review_node")
+    .addEdge("image_plan_node", "layout_node")
+    .addEdge("layout_node", "review_node")
     .addConditionalEdges("review_node", routeAfterReview)
-    .addEdge("revision_node", "review_node")
+    .addEdge("revision_node", "image_plan_node")
     .addEdge("artifact_node", END)
     .addEdge("fail_node", END)
     .compile();

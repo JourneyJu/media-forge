@@ -100,6 +100,8 @@ POST /conversations/:id/turns
 → 创建 Run 和 outbox
 ```
 
+后续发送不得把历史用户消息拼接成当前 Run 的原始指令。RunContext 必须区分最新 `currentInstruction`、本轮 `currentResourceIds` 和用户显式选择的 `inheritedResourceIds`。服务端根据 `creationMode` 区分重新创作、局部修改和继续扩写；重新创作必须清空旧 brief、标题、提纲、正文摘要、LayoutPlan 和 `lastArtifactId`。
+
 ### 历史恢复
 
 页面加载历史列表但默认保持本地空会话。用户点击历史项后调用 `GET /conversations/:id`，恢复消息、资源、active Run 和最新 Artifact。
@@ -142,10 +144,15 @@ DELETE /conversations/:id
 
 后续用户 Turn 创建 Run 时，`conversations` 模块负责读取 Working Memory、识别 Turn 意图、组装本次 `CreationRunContext`，并保证已经创建的 Run 不受后续消息影响。Conversation 删除时，关联 Working Memory 必须随 Conversation 聚合一起清理。
 
+用户可以使用 `creationMode=auto|new|revise|continue` 表达意图。用户显式选择优先于服务端推断；`auto` 只分析最新 Turn，不读取拼接后的历史文本。新创作默认只使用本轮资源，旧资源只有在用户明确继承时才能进入新 Run。
+
 ## 风险
 
 - 禁止把用户 prompt 直接当文章标题；它只作为历史 Conversation 标题。
 - 禁止把所有历史 Conversation 注入当前模型上下文。
+- 禁止把同一 Conversation 的多条历史用户消息拼接为当前 Turn。
+- 禁止新创作自动继承旧 Artifact、旧 LayoutPlan 或会话内全部旧资源。
 - 禁止展示模型原始思维链。
 - SSE 断线必须通过持久化 RunEvent 补发。
 - 删除 Outbox 必须先固化 object keys，再删除数据库聚合。
+- 目标行为和契约见 `docs/specs/015-multi-agent-content-and-layout-quality.md`。

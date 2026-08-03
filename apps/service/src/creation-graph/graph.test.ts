@@ -39,6 +39,9 @@ describe("wechat article creation graph", () => {
     expect(result.titles?.items).toHaveLength(3);
     expect(result.titles?.items.some((item) => item.id === result.titles?.selectedId)).toBe(true);
     expect(result.outline?.sections).toHaveLength(3);
+    expect(result.materials?.items).toEqual([]);
+    expect(result.contentPlan?.sections).toHaveLength(3);
+    expect(result.layoutPlan?.theme).toBeDefined();
     expect(result.reviewReports.at(-1)?.passed).toBe(true);
     expect(result.artifactValidation?.passed).toBe(true);
     expect(result.finalDocument?.attrs.title).not.toContain("帮我做一个公众号文案");
@@ -47,6 +50,37 @@ describe("wechat article creation graph", () => {
       .map((item) => item.text)
       .join("");
     expect(copy).not.toContain("要求如下");
+    expect(copy).not.toContain("摄影团队");
+  });
+
+  it("does not reuse a photography memory for a new dance award topic", async () => {
+    const result = await runWechatArticleGraph({
+      ...baseState("金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请围绕获奖现场重新创作。"),
+      memory: {
+        materialSummary: [],
+        userConstraints: [],
+        brief: {
+          subject: "儿童摄影",
+          goal: "brand",
+          audience: "儿童家长",
+          contentType: "品牌故事",
+          tone: "warm",
+          storyAngle: "成长记录",
+          materialRequirements: [],
+          resourceIds: [],
+          constraints: [],
+          prohibitedContent: [],
+          skillId: "auto"
+        },
+        lastArtifactId: "old_photography_artifact"
+      }
+    }, { agents: createDemoCreationAgents() });
+
+    const copy = result.finalDocument?.content.flatMap((block) => block.content ?? []).map((item) => item.text).join("") ?? "";
+    expect(result.brief?.subject).toContain("小兰花获奖");
+    expect(copy).toContain("小兰花");
+    expect(copy).not.toContain("摄影");
+    expect(result.layoutPlan?.theme).toBe("celebration");
   });
 
   it("stops for clarification when the input is too thin", async () => {

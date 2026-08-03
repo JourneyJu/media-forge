@@ -5,6 +5,7 @@ import type {
   ConversationListItem,
   ConversationMessage,
   ConversationResource,
+  ConversationMaterialSummary,
   ConversationWorkingMemory,
   CreateConversationTurnRequest,
   CreateConversationTurnResponse,
@@ -209,6 +210,19 @@ function isRevisionIntent(input: string, memory: ConversationWorkingMemory): boo
   return /改|调整|换|优化|加|删|重写|更|补充|第三段|标题|语气|风格/u.test(input) || input.trim().length <= 40;
 }
 
+function resolveCreationMode(
+  requested: CreateConversationTurnRequest["creationMode"],
+  input: string,
+  memory: ConversationWorkingMemory,
+  currentResourceIds: string[]
+): CreationRunContext["creationMode"] {
+  if (requested !== "auto") return requested;
+  if (!memory.lastArtifactId || isNewCreationIntent(input)) return "new";
+  if (isRevisionIntent(input, memory)) return "revise";
+  if (input.trim().length >= 80 && currentResourceIds.length > 0) return "new";
+  return "continue";
+}
+
 function createRunContext(
   conversationId: string,
   contextVersion: number,
@@ -218,28 +232,54 @@ function createRunContext(
     skillId: string;
     selectedSkills: CreationRunContext["selectedSkills"];
     maxSteps: number;
+    requestedCreationMode: CreateConversationTurnRequest["creationMode"];
+    currentResourceIds: string[];
+    inheritedResourceIds: string[];
+    currentMaterialSummary: ConversationMaterialSummary[];
   },
   memory: ConversationWorkingMemory
 ): CreationRunContext {
-  const revisionIntent = isRevisionIntent(input.userInput, memory)
+  const creationMode = resolveCreationMode(
+    input.requestedCreationMode,
+    input.userInput,
+    memory,
+    input.currentResourceIds
+  );
+  const revisionIntent = creationMode === "revise"
     ? {
         target: revisionTarget(input.userInput),
         instruction: clip(input.userInput, 1000),
         createdAt: new Date().toISOString()
       }
     : undefined;
-  const memorySnapshot = isNewCreationIntent(input.userInput)
+  const memorySnapshot = creationMode === "new"
     ? createEmptyMemory(conversationId, contextVersion)
     : memory;
+  const selectedResources = new Set(input.resourceIds);
+  const materialSummary = new Map(
+    memorySnapshot.materialSummary
+      .filter((item) => selectedResources.has(item.resourceId))
+      .map((item) => [item.resourceId, item])
+  );
+  for (const item of input.currentMaterialSummary) materialSummary.set(item.resourceId, item);
   return creationRunContextSchema.parse({
-    ...input,
+    userInput: input.userInput,
+    resourceIds: input.resourceIds,
+    currentInstruction: input.userInput,
+    creationMode,
+    currentResourceIds: input.currentResourceIds,
+    inheritedResourceIds: input.inheritedResourceIds,
+    skillId: input.skillId,
+    selectedSkills: input.selectedSkills,
+    maxSteps: input.maxSteps,
     contextVersion,
     memory: {
       brief: memorySnapshot.brief,
       selectedTitle: memorySnapshot.selectedTitle,
       outline: memorySnapshot.outline,
+      layoutPlan: memorySnapshot.layoutPlan,
       draftSummary: memorySnapshot.draftSummary,
-      materialSummary: memorySnapshot.materialSummary,
+      materialSummary: [...materialSummary.values()],
       userConstraints: memorySnapshot.userConstraints,
       lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
       revisionIntent
@@ -311,6 +351,20 @@ export function createConversationLifecycleService(
   ): Promise<CreationRun> {
     const run = createQueuedRun(conversationId, createdAt);
     const memory = await getConversationMemory(client, conversationId, contextVersion);
+    const resourceResult = resourceIds.length > 0
+      ? await client.query<Pick<ResourceRow, "id" | "source" | "original_name" | "content_type">>(
+          `select id, source, original_name, content_type from resources
+           where owner_id = $1 and id = any($2::text[]) and status = 'attached'`,
+          [ownerId, resourceIds]
+        )
+      : { rows: [] };
+    const currentMaterialSummary: ConversationMaterialSummary[] = resourceResult.rows.map((resource) => ({
+      resourceId: resource.id,
+      type: resource.content_type.startsWith("image/") ? "image" : "document",
+      description: `素材“${clip(resource.original_name, 180)}”（${resource.content_type}，来源：${resource.source}）`,
+      suggestedUsage: "由 Material Agent 结合本轮主题判断封面、正文配图或内容证据用途",
+      quality: "medium"
+    }));
     const selectedSkills = userSkills
       ? await userSkills.resolveMentions(ownerId, input.skillMentions)
       : [];
@@ -322,7 +376,11 @@ export function createConversationLifecycleService(
         resourceIds,
         skillId: selectedSkills[0]?.skillId ?? input.layoutSkillId,
         selectedSkills,
-        maxSteps: input.maxSteps
+        maxSteps: input.maxSteps,
+        requestedCreationMode: input.creationMode,
+        currentResourceIds: input.resourceIds,
+        inheritedResourceIds: input.inheritedResourceIds,
+        currentMaterialSummary
       },
       memory
     );
@@ -332,7 +390,7 @@ export function createConversationLifecycleService(
       workspaceId: ownerId,
       contextVersion,
       graphName: "wechat_article_creation",
-      graphVersion: "2026-07-27"
+      graphVersion: "2026-08-03"
     };
     await client.query(
       `insert into runs
@@ -428,6 +486,25 @@ export function createConversationLifecycleService(
       conversation_id: conversationId,
       status: "attached"
     }));
+  }
+
+  async function resolveInheritedResourceIds(
+    client: PoolClient,
+    ownerId: string,
+    conversationId: string,
+    resourceIds: string[]
+  ): Promise<string[]> {
+    if (resourceIds.length === 0) return [];
+    const uniqueIds = [...new Set(resourceIds)];
+    const result = await client.query<{ id: string }>(
+      `select id from resources
+       where owner_id = $1 and conversation_id = $2 and status = 'attached'
+         and id = any($3::text[])`,
+      [ownerId, conversationId, uniqueIds]
+    );
+    if (result.rows.length !== uniqueIds.length) throw new Error("RUN_CONTEXT_INVALID");
+    const allowed = new Set(result.rows.map((row) => row.id));
+    return uniqueIds.filter((id) => allowed.has(id));
   }
 
   async function getIdempotentResponse(
@@ -536,6 +613,7 @@ export function createConversationLifecycleService(
     ): Promise<CreateConversationTurnResponse> {
       const existing = await getIdempotentResponse(ownerId, input.idempotencyKey);
       if (existing) return existing;
+      if (input.inheritedResourceIds.length > 0) throw new Error("RUN_CONTEXT_INVALID");
       await withTransaction(async (client) => {
         await client.query("select pg_advisory_xact_lock(hashtext($1))", [`${ownerId}:${input.idempotencyKey}`]);
         const duplicate = await client.query(
@@ -631,25 +709,21 @@ export function createConversationLifecycleService(
            where id = $1`,
           [conversationId, contextVersion, createdAt]
         );
-        const contextMessages = await client.query<{ content: string }>(
-          `select content from conversation_messages
-           where conversation_id = $1 and role = 'user'
-           order by created_at desc limit 20`,
-          [conversationId]
+        const inheritedResourceIds = await resolveInheritedResourceIds(
+          client,
+          ownerId,
+          conversationId,
+          input.inheritedResourceIds
         );
-        const allResources = await client.query<{ id: string }>(
-          `select id from resources
-           where conversation_id = $1 and status = 'attached' order by created_at`,
-          [conversationId]
-        );
+        const runResourceIds = [...new Set([...input.resourceIds, ...inheritedResourceIds])];
         const run = await insertRun(
           client,
           ownerId,
           conversationId,
           contextVersion,
-          contextMessages.rows.reverse().map((message) => message.content).join("\n\n"),
-          allResources.rows.map((resource) => resource.id),
-          input,
+          input.content,
+          runResourceIds,
+          { ...input, inheritedResourceIds },
           createdAt
         );
         await client.query(

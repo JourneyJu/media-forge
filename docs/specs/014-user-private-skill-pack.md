@@ -284,6 +284,8 @@ Agent 输出只能引用 `assetKey`：
 
 Artifact Builder 或 renderer 负责把 `assetKey` 解析成当前用户有权访问、导出时可用的 HTTPS 图片 URL。二维码默认只允许出现在 CTA 或结尾区域；logo 默认只允许用于品牌露出，不作为正文配图随机插入。
 
+Skill 必须按 Brief、Planner、Writer、Layout 和 Reviewer 的职责分别裁剪输入，不能只在 Brief 中附加几句文案规则。Skill 的视觉规则进入受控 `LayoutPlan`，但 Skill 和模型均不得提供 raw HTML、CSS、脚本或可执行 renderer。完整链路与验收见 `docs/specs/015-multi-agent-content-and-layout-quality.md`。
+
 ## 安全边界
 
 - Skill 包不得包含可执行代码。

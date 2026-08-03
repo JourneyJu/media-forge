@@ -14,6 +14,8 @@ import type { CreationPersistence } from "./persistence";
 import { createCreationPersistence } from "./persistence";
 import { creationRunQueueName, getRedisUrl, parseRedisConnection } from "./queue";
 import { adminConsole } from "../admin-console";
+import { createResourceService } from "../assets/resource-service";
+import { analyzeAsset } from "../vision-gateway";
 
 interface VisibleStep {
   id: string;
@@ -24,29 +26,36 @@ interface VisibleStep {
 }
 
 const outputTypeByNode: Partial<Record<string, AgentOutputType>> = {
+  material: "material_summary",
   brief: "creative_brief",
+  planner: "content_plan",
   title: "title_candidates",
   outline: "article_outline",
   writer: "article_draft",
   revision: "article_draft",
   image_plan: "image_plan",
+  layout: "layout_plan",
   review: "review_report",
   artifact: "artifact_validation"
 };
 
 const outputKeyByNode: Partial<Record<string, keyof CreationGraphState>> = {
+  material: "materials",
   brief: "brief",
+  planner: "contentPlan",
   title: "titles",
   outline: "outline",
   writer: "draft",
   revision: "draft",
   image_plan: "imagePlan",
+  layout: "layoutPlan",
   review: "reviewReports",
   artifact: "artifactValidation"
 };
 
 function createInitialState(job: CreationRunJob, context: {
   userInput: string;
+  currentInstruction?: string;
   resourceIds: string[];
   skillId: string;
   selectedSkills?: CreationGraphState["selectedSkills"];
@@ -56,7 +65,7 @@ function createInitialState(job: CreationRunJob, context: {
     workspaceId: job.workspaceId,
     conversationId: job.conversationId,
     runId: job.runId,
-    userInput: context.userInput,
+    userInput: context.currentInstruction ?? context.userInput,
     resourceIds: context.resourceIds,
     skillId: context.skillId,
     selectedSkills: context.selectedSkills ?? [],
@@ -65,6 +74,75 @@ function createInitialState(job: CreationRunJob, context: {
     revisionCount: 0,
     maxRevisionCount: 2,
     status: "running"
+  };
+}
+
+export async function enrichImageMaterials(
+  job: CreationRunJob,
+  context: Awaited<ReturnType<CreationPersistence["getRunContext"]>>,
+  dependencies: {
+    resources?: Pick<ReturnType<typeof createResourceService>, "getContent" | "close">;
+    analyze?: typeof analyzeAsset;
+  } = {}
+): Promise<typeof context> {
+  if (
+    process.env.MODEL_MODE === "demo"
+    || (process.env.NODE_ENV === "test" && !dependencies.analyze)
+    || context.resourceIds.length === 0
+  ) {
+    return context;
+  }
+
+  const resources = dependencies.resources ?? createResourceService();
+  const analyze = dependencies.analyze ?? analyzeAsset;
+  const summaries = new Map(
+    (context.memory?.materialSummary ?? []).map((item) => [item.resourceId, item])
+  );
+  try {
+    for (const resourceId of context.resourceIds) {
+      const existing = summaries.get(resourceId);
+      if (existing?.ocrText || (existing && !existing.description.startsWith("素材“"))) continue;
+      try {
+        const content = await resources.getContent(job.workspaceId, resourceId);
+        if (!content.contentType?.startsWith("image/")) continue;
+        const chunks: Buffer[] = [];
+        for await (const chunk of content.body) chunks.push(Buffer.from(chunk));
+        const imageUrl = `data:${content.contentType};base64,${Buffer.concat(chunks).toString("base64")}`;
+        const analysis = await analyze({
+          workspaceId: job.workspaceId,
+          assetId: resourceId,
+          imageUrl,
+          purpose: "body"
+        }, { userId: job.workspaceId, runId: job.runId });
+        summaries.set(resourceId, {
+          resourceId,
+          type: "image",
+          description: analysis.description,
+          ...(analysis.ocrText ? { ocrText: analysis.ocrText } : {}),
+          suggestedUsage: analysis.suggestedUsage,
+          quality: "high"
+        });
+      } catch {
+        summaries.set(resourceId, {
+          resourceId,
+          type: "image",
+          description: existing?.description ?? "图片视觉分析暂不可用",
+          suggestedUsage: existing?.suggestedUsage ?? "仅在内容与图片主题可以确认匹配时使用",
+          quality: "low"
+        });
+      }
+    }
+  } finally {
+    await resources.close();
+  }
+
+  return {
+    ...context,
+    memory: {
+      ...context.memory,
+      materialSummary: [...summaries.values()],
+      userConstraints: context.memory?.userConstraints ?? []
+    }
   };
 }
 
@@ -114,7 +192,8 @@ export async function processCreationRunJob(
   persistence = createCreationPersistence()
 ): Promise<CreationGraphState> {
   const payload = creationRunJobSchema.parse(job.data);
-  const context = await persistence.getRunContext(payload.runId);
+  const storedContext = await persistence.getRunContext(payload.runId);
+  const context = await enrichImageMaterials(payload, storedContext);
   const taskIds = new Map<string, string>();
   const visibleSteps: VisibleStep[] = [];
 
@@ -194,7 +273,8 @@ export async function processCreationRunJob(
 
     const response = buildWechatArticleResponse(
       result.finalDocument,
-      process.env.MODEL_MODE === "demo" ? "local-demo" : "gateway"
+      process.env.MODEL_MODE === "demo" ? "local-demo" : "gateway",
+      result.layoutPlan
     );
     const artifact = await persistence.saveArtifact(payload.conversationId, payload.runId, response);
     await persistence.updateConversationMemoryFromGraphResult(

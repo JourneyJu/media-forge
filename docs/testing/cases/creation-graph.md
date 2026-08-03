@@ -93,7 +93,8 @@
 ## CG-012A 基于上一版修改
 
 前置：Conversation 已完成一版公众号 Artifact。  
-步骤：用户发送“第三段加上活动时间，语气更温暖”。  
+步骤：用户要求在指定章节补充活动时间，并调整该章节语气。
+
 期望：Writer 或 Revision Agent 基于上一版 ArticleDocument 定向修改；最终 Artifact 保留未要求修改的章节结构，不从空白重新生成。
 
 ## CG-013 手机预览边界
@@ -126,3 +127,71 @@
 
 步骤：未配置 Model Gateway 且未显式设置 `MODEL_MODE=demo`。  
 期望：Run 返回 `GENERATION_MODEL_UNAVAILABLE` 或 failed，不自动生成 Demo 文章。
+
+## CG-019 生产环境禁止 Demo
+
+步骤：以 `NODE_ENV=production` 和 `MODEL_MODE=demo` 启动 service 或 worker。
+
+期望：启动检查失败或 Run 明确失败；不得生成 `multi-agent-demo` Artifact，不得产生伪步骤完成事件。
+
+## CG-020 最新 Turn 不受历史主题污染
+
+前置：同一 Conversation 已完成一篇儿童摄影文章。
+
+步骤：用户提交完整的舞蹈获奖新需求，并选择 `creationMode=new`。
+
+期望：RunContext 的 `currentInstruction` 只包含最新 Turn；Brief、标题、正文和审校结果不得出现摄影、镜头、家庭成长等旧主题语义。
+
+## CG-021 新创作资源隔离
+
+前置：Conversation 中已有摄影图片，本轮上传舞蹈演出图片。
+
+步骤：以 `creationMode=new` 创建 Run，`inheritedResourceIds` 为空。
+
+期望：Material 和 ImagePlan 只收到本轮图片；Artifact 不引用历史摄影资源。
+
+## CG-022 显式继承旧资源
+
+前置：存在上一版品牌 Logo，用户在新创作中显式选择该资源。
+
+步骤：将 Logo ID 放入 `inheritedResourceIds`。
+
+期望：RunContext 冻结该资源；服务端校验 owner 和用途后允许 LayoutPlan 在品牌模块引用。
+
+## CG-023 结构化正文映射
+
+步骤：Writer 生成包含 intro、三个 sections、conclusion 和 CTA 的 ArticleDraft。
+
+期望：Artifact Builder 按 section 生成标题、段落和图片，不按段落下标猜测章节；每个 assetRef 都能追溯到 ImagePlan。
+
+## CG-024 主题化 LayoutPlan
+
+步骤：为舞蹈获奖内容执行 Layout Agent。
+
+期望：输出 celebration、editorial 或其他与舞台主题适配的受控 LayoutPlan；未明确选择少儿成长 Skill 时不得沿用其绿色编号模板。
+
+## CG-025 LayoutPlan 安全边界
+
+步骤：模拟 Layout Agent 返回 raw HTML、style 字符串、脚本或非白名单模块。
+
+期望：schema 校验失败并产生 `LAYOUT_PLAN_INVALID`；Renderer 不执行、不保存该内容。
+
+## CG-026 Reviewer 定向回退
+
+步骤：分别模拟主题理解错误、正文深度不足、图片错配和版式不匹配。
+
+期望：Graph 分别回退 Brief、Planner/Writer、ImagePlan 和 Layout；不得把所有问题统一交给正文 Revision。
+
+## CG-027 Review 未通过不创建 Artifact
+
+步骤：Reviewer 两轮后仍报告主题污染或要求覆盖不足。
+
+期望：Run failed，不产生 `artifact.created`，不存在新的 ArticleVersion。
+
+## CG-028 Skill 贯穿全部阶段
+
+前置：用户选择包含语气、结构、品牌色、Logo、二维码和禁用规则的私有 Skill。
+
+步骤：执行完整 Run。
+
+期望：Brief、Planner、Writer、Layout 和 Reviewer 分别收到与职责相关的 Skill 子集；二维码只进入 CTA，Logo 只进入品牌模块；Run 可证明 Skill 已实际应用。

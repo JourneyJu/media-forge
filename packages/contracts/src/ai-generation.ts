@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ArticleDocument, WechatRenderResult } from "./articles";
+import type { LayoutPlan } from "./creation-graph";
 
 export const articleToneSchema = z.enum(["friendly", "professional", "lively", "warm"]);
 export const articleStyleSchema = z.enum(["practical", "story", "list", "promotion"]);
@@ -53,6 +54,7 @@ export interface GenerateWechatArticleResponse {
   articleId: string;
   versionId: string;
   document: ArticleDocument;
+  layoutPlan?: LayoutPlan;
   render: WechatRenderResult;
   model: {
     provider: string;

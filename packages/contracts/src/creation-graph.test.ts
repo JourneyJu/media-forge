@@ -15,7 +15,7 @@ describe("creation graph contracts", () => {
       workspaceId: "workspace_1",
       contextVersion: 1,
       graphName: "wechat_article_creation",
-      graphVersion: "2026-07-27"
+      graphVersion: "2026-08-03"
     });
 
     expect(job.contextVersion).toBe(1);
@@ -63,12 +63,15 @@ describe("creation graph contracts", () => {
     const context = creationRunContextSchema.parse({
       userInput: "写一篇公众号文章，介绍本周活动。",
       resourceIds: [],
+      currentInstruction: "写一篇公众号文章，介绍本周活动。",
       skillId: "auto",
       maxSteps: 12
     });
 
     expect(context.memory.materialSummary).toEqual([]);
     expect(context.memory.userConstraints).toEqual([]);
+    expect(context.creationMode).toBe("new");
+    expect(context.currentResourceIds).toEqual([]);
   });
 
   it("validates conversation scoped working memory", () => {

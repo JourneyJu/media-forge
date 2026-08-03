@@ -20,6 +20,11 @@
 - 最终内容防污染。
 - 标题候选生成、自动选择和标题来源校验。
 - 入队 Outbox、重复消费和 Artifact 幂等。
+- 生产环境 Demo 禁止和模型路由门禁。
+- 最新 Turn、CreationMode 和本轮/继承资源隔离。
+- MaterialSummary、ContentPlan、结构化 ArticleDraft 和 LayoutPlan。
+- Reviewer 按问题类型回退节点，以及未通过时禁止创建 Artifact。
+- Skill 规则和品牌资源在 Brief、Planner、Writer、Layout、Reviewer 的阶段化应用。
 
 ## 不覆盖
 
@@ -31,8 +36,8 @@
 
 | 层级 | 覆盖内容 |
 | --- | --- |
-| Contract 测试 | Graph State、AgentOutput、RunEvent schema。 |
-| Unit 测试 | 单个 node、Title policy、Artifact Builder、clarification policy。 |
+| Contract 测试 | Graph State、CreationMode、结构化 ArticleDraft、LayoutPlan、AgentOutput、RunEvent schema。 |
+| Unit 测试 | 单个 node、意图策略、资源范围、Title policy、Artifact Builder、Renderer、clarification policy。 |
 | Integration 测试 | `POST /runs` → queue → worker → events → artifact。 |
 | API 测试 | 追问提交、任务列表、事件流。 |
 | UI 测试 | 对话流、任务卡、手机预览更新。 |
@@ -141,3 +146,7 @@ Writer Agent 抛错
 - 自动 Demo 回退掩盖模型配置错误。
 - 原始用户提示词被当作 `subject`、标题或正文。
 - Working Memory 被当作最终正文事实源，覆盖 Artifact / ArticleDocument。
+- 历史用户消息拼接后覆盖最新 Turn 的主题。
+- 新创作自动携带会话内旧素材或旧 LayoutPlan。
+- UI 展示多 Agent 步骤，但底层实际执行 Demo 或固定模板。
+- Layout Agent 输出任意 HTML/CSS 绕过可信 Renderer。

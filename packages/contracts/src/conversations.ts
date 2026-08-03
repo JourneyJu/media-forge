@@ -25,6 +25,7 @@ export const creationRunStatusSchema = z.enum([
   "cancelled"
 ]);
 export const creationRunTypeSchema = z.enum(["wechat_article_generation"]);
+export const creationModeSchema = z.enum(["auto", "new", "revise", "continue"]);
 export const artifactTypeSchema = z.enum(["wechat_article", "title_candidates", "image_plan"]);
 export const runEventTypeSchema = z.enum([
   "run.created",
@@ -49,6 +50,7 @@ export type ConversationMessageRole = z.infer<typeof conversationMessageRoleSche
 export type ConversationResourceSource = z.infer<typeof conversationResourceSourceSchema>;
 export type CreationRunStatus = z.infer<typeof creationRunStatusSchema>;
 export type CreationRunType = z.infer<typeof creationRunTypeSchema>;
+export type CreationMode = z.infer<typeof creationModeSchema>;
 export type ArtifactType = z.infer<typeof artifactTypeSchema>;
 export type RunEventType = z.infer<typeof runEventTypeSchema>;
 
@@ -62,6 +64,8 @@ export const createConversationTurnRequestSchema = z.object({
   content: z.string().trim().min(1).max(4000),
   uploadSessionId: z.string().trim().min(1).optional(),
   resourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
+  inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
+  creationMode: creationModeSchema.default("auto"),
   layoutSkillId: z.enum(builtInLayoutSkillIds).default("auto"),
   skillMentions: z.array(userSkillMentionSchema).max(1).default([]),
   maxSteps: z.number().int().min(4).max(12).default(12)

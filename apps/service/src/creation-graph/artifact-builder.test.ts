@@ -2,100 +2,166 @@ import { describe, expect, it } from "vitest";
 import type {
   ArticleDraft,
   ArticleOutline,
+  ContentPlan,
+  CreativeBrief,
   ImagePlan,
+  LayoutPlan,
+  ResolvedUserSkill,
   TitleCandidates
 } from "@mediaforge/contracts";
-import { validateArticleArtifact } from "./artifact-builder";
+import { buildArticleDocument, validateArticleArtifact } from "./artifact-builder";
 
+const title = "小兰花舞台上的获奖时刻";
 const titles: TitleCandidates = {
   items: [
-    { id: "a", title: "把童年留在镜头里", angle: "故事", audienceFit: 95, brandFit: 92, clickPotential: 90, riskFlags: [] },
-    { id: "b", title: "孩子长大的瞬间", angle: "共鸣", audienceFit: 94, brandFit: 88, clickPotential: 92, riskFlags: [] },
-    { id: "c", title: "好的儿童摄影是什么", angle: "专业", audienceFit: 90, brandFit: 95, clickPotential: 86, riskFlags: [] }
+    { id: "a", title, angle: "事件", audienceFit: 95, brandFit: 92, clickPotential: 90, riskFlags: [] },
+    { id: "b", title: "一次舞台绽放", angle: "现场", audienceFit: 94, brandFit: 88, clickPotential: 92, riskFlags: [] },
+    { id: "c", title: "荣誉背后的成长", angle: "意义", audienceFit: 90, brandFit: 95, clickPotential: 86, riskFlags: [] }
   ],
   selectedId: "a",
-  selectionReason: "综合评分最高"
+  selectionReason: "准确表达本轮主题"
 };
-
+const headings = ["获奖消息", "舞台现场", "成长意义"];
+const brief: CreativeBrief = {
+  subject: "小兰花舞蹈获奖",
+  goal: "event",
+  audience: "关注舞蹈艺术的读者",
+  contentType: "公众号图文",
+  tone: "lively",
+  storyAngle: "从获奖事实和舞台现场展开",
+  materialRequirements: [],
+  resourceIds: ["dance_1"],
+  constraints: [],
+  prohibitedContent: ["旧摄影主题"],
+  skillId: "auto"
+};
+const contentPlan: ContentPlan = {
+  angle: "获奖事实",
+  narrative: "事实、现场、意义",
+  requirements: [],
+  sections: headings.map((heading) => ({ heading, purpose: heading, keyPoints: [heading], assetRefs: heading === "舞台现场" ? ["dance_1"] : [] })),
+  callToAction: "关注后续演出"
+};
 const outline: ArticleOutline = {
-  title: "把童年留在镜头里",
-  openingHook: "从家庭日常切入",
-  callToAction: "了解更多案例",
-  sections: [
-    { title: "第一章", objective: "共鸣", storyBeat: "成长", commercialGoal: "理解价值" },
-    { title: "第二章", objective: "专业", storyBeat: "拍摄", commercialGoal: "建立信任" },
-    { title: "第三章", objective: "行动", storyBeat: "回忆", commercialGoal: "引导咨询" }
-  ]
+  title,
+  openingHook: "从获奖消息切入",
+  callToAction: "关注后续演出",
+  sections: headings.map((heading) => ({ title: heading, objective: heading, storyBeat: heading, commercialGoal: "准确表达" }))
+};
+const imagePlan: ImagePlan = {
+  items: [{ placement: "section", description: "舞台合照", resourceId: "dance_1" }]
+};
+const layoutPlan: LayoutPlan = {
+  theme: "celebration",
+  palette: { primary: "#C51D5D", accent: "#F2B134", text: "#20252B", surface: "#F7F8F6" },
+  titleTreatment: "poster",
+  introTreatment: "highlight-panel",
+  sectionTreatment: "labelled",
+  imageTreatment: "full-width",
+  blocks: [{ kind: "title" }, { kind: "intro" }, { kind: "section", sectionIndex: 0 }, { kind: "cta" }]
+};
+const brandSkill: ResolvedUserSkill = {
+  skillId: "skill_1",
+  versionId: "version_1",
+  name: "金舞艺术品牌风格",
+  manifest: {
+    manifestVersion: "1.0",
+    name: "金舞艺术品牌风格",
+    category: "wechat_article_style",
+    style: { tone: "热烈" },
+    assets: [{ key: "consult_qrcode", type: "qrcode", usage: "文章结尾咨询" }]
+  },
+  assets: [{ id: "asset_1", key: "consult_qrcode", type: "qrcode", usage: "文章结尾咨询" }]
 };
 
-const imagePlan: ImagePlan = {
-  items: [{ placement: "cover", description: "自然儿童照片" }]
-};
+function validDraft(): ArticleDraft {
+  return {
+    title,
+    intro: "小兰花舞蹈获奖的消息，为这次舞台经历留下了清晰注脚。",
+    sections: headings.map((heading) => ({
+      heading,
+      purpose: heading,
+      paragraphs: [`围绕${heading}展开具体叙述。`],
+      assetRefs: heading === "舞台现场" ? ["dance_1"] : []
+    })),
+    conclusion: "小兰花舞蹈获奖既是荣誉，也是新的开始。",
+    callToAction: "关注后续演出"
+  };
+}
 
 describe("artifact builder guard", () => {
-  it("rejects raw instructions and titles outside selected candidates", () => {
-    const draft: ArticleDraft = {
-      title: "帮我做一个公众号文案，要求如下",
-      paragraphs: ["我会先整理计划。", "正文第二段。", "正文第三段。"]
-    };
-
+  it("rejects process copy and titles outside selected candidates", () => {
     const result = validateArticleArtifact({
       userInput: "帮我做一个公众号文案，要求如下",
+      brief,
+      contentPlan,
       titles,
       outline,
-      draft,
-      imagePlan
+      draft: { ...validDraft(), title: "帮我做一个公众号文案，要求如下", intro: "我会先整理计划。" },
+      imagePlan,
+      layoutPlan
     });
 
-    expect(result.passed).toBe(false);
     expect(result.violations.map((item) => item.code)).toContain("TITLE_SOURCE_INVALID");
     expect(result.violations.map((item) => item.code)).toContain("PROCESS_COPY_LEAK");
   });
 
-  it("allows a concise topic inside a crafted title but rejects the raw prompt as the title", () => {
-    const topic = "多 Agent 流式任务进度";
-    const craftedTitles: TitleCandidates = {
-      items: [
-        {
-          id: "topic",
-          title: `从一个真实场景，重新认识${topic}`,
-          angle: "场景故事",
-          audienceFit: 90,
-          brandFit: 90,
-          clickPotential: 88,
-          riskFlags: []
-        }
-      ],
-      selectedId: "topic",
-      selectionReason: "对主题进行了标题化表达"
-    };
-    const draft: ArticleDraft = {
-      title: craftedTitles.items[0]!.title,
-      paragraphs: ["第一段正文。", "第二段正文。", "第三段正文。"]
-    };
+  it("builds section and image blocks from the structured draft", () => {
+    const result = buildArticleDocument({
+      userInput: "为小兰花舞蹈获奖写一篇公众号文章",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft: validDraft(),
+      imagePlan,
+      layoutPlan
+    });
 
-    expect(validateArticleArtifact({
-      userInput: topic,
-      titles: craftedTitles,
-      outline: { ...outline, title: draft.title },
-      draft,
-      imagePlan
-    }).passed).toBe(true);
+    expect(result.validation.passed).toBe(true);
+    expect(result.document.content.filter((block) => block.type === "heading")).toHaveLength(3);
+    expect(result.document.content.find((block) => block.type === "image")?.attrs?.resourceId).toBe("dance_1");
+    expect(result.document.attrs.scenario).toBe("celebration");
+  });
 
-    const rawTitle = {
-      ...draft,
-      title: topic
-    };
-    const rawTitles: TitleCandidates = {
-      ...craftedTitles,
-      items: [{ ...craftedTitles.items[0]!, title: topic }]
-    };
-    expect(validateArticleArtifact({
-      userInput: topic,
-      titles: rawTitles,
-      outline: { ...outline, title: topic },
-      draft: rawTitle,
-      imagePlan
-    }).violations.map((item) => item.code)).toContain("RAW_PROMPT_AS_TITLE");
+  it("resolves a frozen Skill qrcode only into the ending area", () => {
+    const result = buildArticleDocument({
+      userInput: "为小兰花舞蹈获奖写一篇公众号文章",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft: validDraft(),
+      imagePlan: {
+        items: [
+          ...imagePlan.items,
+          { placement: "ending", description: "扫码咨询", assetKey: "consult_qrcode" }
+        ]
+      },
+      layoutPlan,
+      selectedSkills: [brandSkill]
+    });
+
+    expect(result.document.content.find((block) => block.type === "qrcode")?.attrs).toMatchObject({
+      assetKey: "consult_qrcode",
+      src: "/user-skills/assets/asset_1/preview",
+      placement: "ending"
+    });
+  });
+
+  it("rejects qrcode placement outside the ending area", () => {
+    const result = validateArticleArtifact({
+      userInput: "为小兰花舞蹈获奖写一篇公众号文章",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft: validDraft(),
+      imagePlan: { items: [{ placement: "section", description: "扫码咨询", assetKey: "consult_qrcode" }] },
+      layoutPlan,
+      selectedSkills: [brandSkill]
+    });
+
+    expect(result.violations.map((item) => item.code)).toContain("QRCODE_PLACEMENT_INVALID");
   });
 });

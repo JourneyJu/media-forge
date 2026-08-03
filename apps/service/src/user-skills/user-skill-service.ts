@@ -391,6 +391,7 @@ export function createUserSkillService(
       const manifest = userSkillManifestSchema.parse(version.manifest_json);
       if (manifest.category !== "wechat_article_style") throw new Error("USER_SKILL_IMPORT_INVALID");
       const assets = (await getAssets(skill.id, version.id)).map((asset) => ({
+        id: asset.id,
         key: asset.asset_key,
         type: asset.type,
         usage: asset.usage,

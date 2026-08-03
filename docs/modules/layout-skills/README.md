@@ -81,6 +81,22 @@ my-brand-style.mediaforge-skill.zip
 - Run 创建时冻结 Skill version、manifest 摘要和资源引用到 `graph_runs.context_json`。
 - Skill 被禁用或删除后不能用于新生成，但不得破坏历史文章版本和 HTML 快照。
 
+## 多 Agent 阶段规则
+
+私有 Skill 不能只作为 Brief 的附加文字。冻结后的 manifest 和资源必须按最小必要原则裁剪给不同节点：
+
+| 阶段 | 可读取内容 |
+| --- | --- |
+| Brief | 品牌定位、受众、语气、禁用表达。 |
+| Planner | 固定栏目、叙事顺序、CTA 和内容模块。 |
+| Writer | 标题风格、段落长度、用词、示例和禁忌。 |
+| Layout | 品牌色、允许模块、Logo、二维码、GIF、分隔图和 CTA 图。 |
+| Reviewer | 品牌一致性、禁用规则和资源位置约束。 |
+
+模型只能输出 `assetKey` 或 `resourceId`，不能得到对象存储凭据，也不能自己拼接对象 URL。解析后的 Skill 资源包含稳定 `assetId`，服务端负责校验 owner、Skill version、asset type 和 usage 后生成 `/user-skills/assets/:assetId/preview`。二维码只能进入结尾 CTA 区域，Logo 使用品牌资源尺寸，GIF 保留动画原件并使用预览参与管理和素材理解。
+
+Skill 可以约束 `LayoutPlan`，但不能提供 raw HTML、CSS、JavaScript、外部脚本或可执行 renderer。平台可信 Renderer 是 HTML 唯一生产者。
+
 ## 内置 Skill
 
 ### 少儿成长清单 `youth-growth-listicle@1.0.0`
@@ -133,7 +149,10 @@ my-brand-style.mediaforge-skill.zip
 - Renderer 修改可能改变复制结果，必须通过兼容性测试并记录版本。
 - 用户私有 Skill 存在 prompt 注入、密钥上传和跨用户资源引用风险，必须使用声明式 manifest、导入扫描和后端权限校验。
 - 二维码和 logo 必须按 asset type 和 role 限制使用区域，避免被模型随机插入正文。
+- Skill 规则未真正进入 Planner、Writer、Layout 和 Reviewer 时，不得把该 Run 标记为已应用 Skill。
 
 ## 规格路由
 
 - `docs/specs/014-user-private-skill-pack.md`
+- `docs/specs/015-multi-agent-content-and-layout-quality.md`
+- `docs/adr/010-structured-content-and-layout-plan.md`

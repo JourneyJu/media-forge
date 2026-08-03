@@ -93,6 +93,7 @@ function sendDomainError(response: ServerResponse, error: unknown): boolean {
     USAGE_USER_NOT_FOUND: 404,
     USAGE_MODEL_NOT_FOUND: 404,
     GENERATION_MODEL_UNAVAILABLE: 503,
+    RUN_CONTEXT_INVALID: 422,
     USER_SKILL_NOT_FOUND: 404,
     USER_SKILL_IMPORT_INVALID: 422,
     USER_SKILL_FORBIDDEN: 403,

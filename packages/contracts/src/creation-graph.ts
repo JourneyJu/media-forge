@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ArticleDocument } from "./articles";
+import { creationModeSchema } from "./conversations";
 import { resolvedUserSkillSchema } from "./user-skills";
 
 export const creationGraphStatusSchema = z.enum([
@@ -21,11 +22,14 @@ export const agentTaskStatusSchema = z.enum([
 
 export const agentOutputTypeSchema = z.enum([
   "creative_brief",
+  "material_summary",
+  "content_plan",
   "clarification_request",
   "title_candidates",
   "article_outline",
   "article_draft",
   "image_plan",
+  "layout_plan",
   "review_report",
   "artifact_validation",
   "render_result"
@@ -121,10 +125,39 @@ export const articleOutlineSchema = z.object({
 
 export type ArticleOutline = z.infer<typeof articleOutlineSchema>;
 
+export const contentPlanSchema = z.object({
+  angle: z.string().trim().min(1).max(300),
+  narrative: z.string().trim().min(1).max(500),
+  requirements: z.array(z.object({
+    requirement: z.string().trim().min(1).max(300),
+    evidence: z.string().trim().min(1).max(300)
+  })).max(20),
+  sections: z.array(z.object({
+    heading: z.string().trim().min(1).max(100),
+    purpose: z.string().trim().min(1).max(300),
+    keyPoints: z.array(z.string().trim().min(1).max(300)).min(1).max(8),
+    assetRefs: z.array(z.string().trim().min(1)).max(10)
+  })).min(3).max(10),
+  callToAction: z.string().trim().min(1).max(300)
+});
+
+export type ContentPlan = z.infer<typeof contentPlanSchema>;
+
+export const articleDraftSectionSchema = z.object({
+  heading: z.string().trim().min(1).max(100),
+  purpose: z.string().trim().min(1).max(300),
+  paragraphs: z.array(z.string().trim().min(1).max(3000)).min(1).max(8),
+  assetRefs: z.array(z.string().trim().min(1)).max(10),
+  emphasis: z.string().trim().min(1).max(500).optional()
+});
+
 export const articleDraftSchema = z.object({
   title: z.string().trim().min(1).max(64),
   subtitle: z.string().trim().max(100).optional(),
-  paragraphs: z.array(z.string().trim().min(1).max(3000)).min(3).max(30)
+  intro: z.string().trim().min(1).max(3000),
+  sections: z.array(articleDraftSectionSchema).min(3).max(10),
+  conclusion: z.string().trim().min(1).max(3000),
+  callToAction: z.string().trim().max(1000).optional()
 });
 
 export type ArticleDraft = z.infer<typeof articleDraftSchema>;
@@ -132,7 +165,8 @@ export type ArticleDraft = z.infer<typeof articleDraftSchema>;
 export const imagePlanItemSchema = z.object({
   placement: z.enum(["cover", "section", "ending"]),
   description: z.string().trim().min(1).max(500),
-  resourceId: z.string().trim().min(1).optional()
+  resourceId: z.string().trim().min(1).optional(),
+  assetKey: z.string().trim().min(1).optional()
 });
 
 export const imagePlanSchema = z.object({
@@ -142,10 +176,46 @@ export const imagePlanSchema = z.object({
 export type ImagePlanItem = z.infer<typeof imagePlanItemSchema>;
 export type ImagePlan = z.infer<typeof imagePlanSchema>;
 
+export const materialAnalysisSchema = z.object({
+  items: z.array(z.object({
+    resourceId: z.string().trim().min(1),
+    type: z.enum(["image", "document", "link", "unknown"]),
+    description: z.string().trim().min(1).max(1000),
+    ocrText: z.string().trim().max(4000).optional(),
+    suggestedUsage: z.string().trim().max(500).optional(),
+    quality: z.enum(["high", "medium", "low"]).optional()
+  })).max(50)
+});
+
+export type MaterialAnalysis = z.infer<typeof materialAnalysisSchema>;
+
+const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/u);
+
+export const layoutPlanSchema = z.object({
+  theme: z.enum(["editorial", "celebration", "story", "report", "brand"]),
+  palette: z.object({
+    primary: hexColorSchema,
+    accent: hexColorSchema,
+    text: hexColorSchema,
+    surface: hexColorSchema
+  }),
+  titleTreatment: z.enum(["centered", "left-editorial", "poster"]),
+  introTreatment: z.enum(["plain", "quote", "highlight-panel"]),
+  sectionTreatment: z.enum(["numbered", "labelled", "minimal", "timeline"]),
+  imageTreatment: z.enum(["full-width", "framed", "gallery"]),
+  blocks: z.array(z.object({
+    kind: z.enum(["title", "intro", "section", "image", "quote", "brand", "cta"]),
+    sectionIndex: z.number().int().min(0).max(9).optional(),
+    assetRef: z.string().trim().min(1).optional()
+  })).min(2).max(40)
+});
+
+export type LayoutPlan = z.infer<typeof layoutPlanSchema>;
+
 export const reviewIssueSchema = z.object({
   code: z.string().trim().min(1).max(80),
   severity: z.enum(["warning", "error"]),
-  target: z.enum(["title", "outline", "body", "image", "cta"]),
+  target: z.enum(["brief", "plan", "title", "outline", "body", "image", "layout", "cta"]),
   instruction: z.string().trim().min(1).max(500)
 });
 
@@ -157,7 +227,11 @@ export const reviewReportSchema = z.object({
     audienceFit: z.number().min(0).max(100),
     naturalness: z.number().min(0).max(100),
     wechatReadability: z.number().min(0).max(100),
-    factualRisk: z.number().min(0).max(100)
+    factualRisk: z.number().min(0).max(100),
+    subjectAlignment: z.number().min(0).max(100),
+    requirementCoverage: z.number().min(0).max(100),
+    contentDepth: z.number().min(0).max(100),
+    layoutFit: z.number().min(0).max(100)
   }),
   issues: z.array(reviewIssueSchema).max(30)
 });
@@ -199,6 +273,7 @@ export const conversationWorkingMemorySchema = z.object({
     openingHook: z.string().trim().max(300).optional(),
     callToAction: z.string().trim().max(300).optional()
   }).optional(),
+  layoutPlan: layoutPlanSchema.optional(),
   draftSummary: z.object({
     artifactId: z.string().trim().min(1).optional(),
     title: z.string().trim().min(1).max(64),
@@ -226,6 +301,7 @@ export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pi
   brief: true,
   selectedTitle: true,
   outline: true,
+  layoutPlan: true,
   draftSummary: true,
   materialSummary: true,
   userConstraints: true,
@@ -236,6 +312,10 @@ export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pi
 export const creationRunContextSchema = z.object({
   userInput: z.string().trim().min(1),
   resourceIds: z.array(z.string().trim().min(1)).max(100),
+  currentInstruction: z.string().trim().min(1).optional(),
+  creationMode: creationModeSchema.exclude(["auto"]).default("new"),
+  currentResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
+  inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   skillId: z.string().trim().min(1),
   selectedSkills: z.array(resolvedUserSkillSchema).max(1).default([]),
   maxSteps: z.number().int().min(1).max(100),
@@ -258,11 +338,14 @@ export interface CreationGraphState {
   selectedSkills: CreationRunContext["selectedSkills"];
   memory?: CreationRunContext["memory"];
   brief?: CreativeBrief;
+  materials?: MaterialAnalysis;
+  contentPlan?: ContentPlan;
   clarification?: ClarificationRequest;
   titles?: TitleCandidates;
   outline?: ArticleOutline;
   draft?: ArticleDraft;
   imagePlan?: ImagePlan;
+  layoutPlan?: LayoutPlan;
   reviewReports: ReviewReport[];
   artifactValidation?: ArtifactValidationResult;
   finalDocument?: ArticleDocument;

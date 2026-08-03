@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ArticleDocument } from "@mediaforge/contracts";
-import { buildEditorialWechatHtml, buildWechatPreviewHtml } from "./wechat-preview";
+import {
+  buildEditorialWechatHtml,
+  buildWechatPreviewHtml,
+  resolveWechatPreviewAssetUrls
+} from "./wechat-preview";
+
+describe("resolveWechatPreviewAssetUrls", () => {
+  it("hydrates only trusted local asset paths for iframe preview", () => {
+    const html = '<img src="/resources/resource_1/content"><img src="https://example.com/a.png">';
+    expect(resolveWechatPreviewAssetUrls(html, (path) => `https://service.local${path}?access_token=test`))
+      .toBe('<img src="https://service.local/resources/resource_1/content?access_token=test"><img src="https://example.com/a.png">');
+  });
+});
 
 describe("buildEditorialWechatHtml", () => {
   it("includes every selected image in an inline-style WeChat layout", () => {

@@ -6,6 +6,8 @@
 
 目标实现见 `docs/specs/006-langgraph-multi-agent-production-completion.md`。
 
+`docs/specs/015-multi-agent-content-and-layout-quality.md` 已确认新的 Turn 上下文、结构化正文和 LayoutPlan 目标契约，但共享 contracts 尚未实施。本节中的目标字段在 contracts 合入前不得视为可调用 API。
+
 ## 定位
 
 Creation Graph 是后端内部多 Agent 编排模块。普通前端主要使用 `docs/api/conversations.md`，本文件只记录多 Agent 相关的新增或扩展 API。
@@ -19,6 +21,8 @@ Creation Graph 是后端内部多 Agent 编排模块。普通前端主要使用 
 ```json
 {
   "type": "wechat_article_generation",
+  "creationMode": "auto",
+  "inheritedResourceIds": [],
   "layoutSkillId": "auto",
   "maxSteps": 12
 }
@@ -43,6 +47,9 @@ Creation Graph 是后端内部多 Agent 编排模块。普通前端主要使用 
 - Turn API 创建 Run 后写 `run.created`。
 - API 使用 `runId` 作为 BullMQ `jobId`，避免重复入队。
 - 数据库提交成功但 Redis 暂时不可用时，通过 dispatch outbox 重试，不静默回退旧同步生成。
+- `creationMode` 目标枚举为 `auto|new|revise|continue`；显式值优先于服务端推断。
+- `new` 默认只使用本 Turn 的 `resourceIds`；旧资源必须通过 `inheritedResourceIds` 显式选择。
+- 服务端不得把历史用户消息拼接为当前 Run 的原始指令。
 
 ## `GET /runs/:runId/events`
 
@@ -144,6 +151,10 @@ data: {"runId":"run_1","artifactId":"artifact_1","artifactType":"wechat_article"
 }
 ```
 
+`AgentOutput.type` 已包含 `material_summary`、`content_plan` 和 `layout_plan`。`layout_plan` 只能包含受控设计令牌和模块引用，不得包含 raw HTML、CSS 或脚本。
+
+Material 节点会对本轮图片调用 `multimodal_generation` 路由，结构化记录场景描述、OCR、质量和建议用途。Skill 品牌资源在 RunContext 中冻结为 `assetId + assetKey + type + usage`；模型只引用 `assetKey`，最终资源地址由 Artifact Builder 按 owner 和 Skill version 的解析结果生成。
+
 安全规则：
 
 - 不返回原始思维链。
@@ -162,3 +173,6 @@ data: {"runId":"run_1","artifactId":"artifact_1","artifactType":"wechat_article"
 | `RUN_OUTPUT_INVALID` | 422 | Agent 输出不符合 schema。 |
 | `RUN_EVENT_STREAM_UNAVAILABLE` | 503 | 事件流暂不可用。 |
 | `WORKER_UNAVAILABLE` | 503 | Worker 或队列不可用。 |
+| `GENERATION_MODEL_UNAVAILABLE` | 503 | 生产环境没有可用的 active 模型路由；不得回退 Demo。 |
+| `RUN_CONTEXT_INVALID` | 422 | 创作模式、当前资源或继承资源不满足目标上下文约束。 |
+| `LAYOUT_PLAN_INVALID` | 422 | LayoutPlan 不符合白名单 schema，禁止进入 Renderer。 |

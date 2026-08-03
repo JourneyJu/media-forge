@@ -10,7 +10,7 @@
 
 - 只管理当前 `Conversation` 内的会话记忆，不建立跨会话长期记忆。
 - 每次 Run 使用冻结上下文快照，保证执行过程可复现。
-- 支持“继续写”“修改标题”“第三段加活动信息”“语气更温暖”等多轮修改。
+- 支持继续扩写、修改标题、定向修改指定章节和调整语气等多轮修改。
 - 避免把完整历史消息无差别塞入模型上下文。
 - 保持 `Artifact` / `ArticleDocument` 作为最终公众号正文事实源。
 
@@ -207,6 +207,16 @@ type TurnIntent =
 - 明确出现“重新生成一篇、新主题、换一个主题”时，判定为 `new_creation`。
 - Run 处于 `waiting_clarification` 且提交追问答案时，判定为 `clarification_answer`。
 
+质量重构后的约束：
+
+- 意图识别只读取最新 Turn，不读取拼接后的多条历史用户消息。
+- 前端可发送 `creationMode=auto|new|revise|continue`；显式值优先于服务端推断。
+- `new_creation` 清空旧 brief、标题、outline、draft summary、LayoutPlan 和 `lastArtifactId`。
+- `new_creation` 默认只使用本轮资源；历史资源必须由用户显式选择后继承。
+- `revise_existing` 才允许读取上一版 ArticleDocument 和与修改目标相关的历史状态。
+
+完整目标契约见 `docs/specs/015-multi-agent-content-and-layout-quality.md`。
+
 ## 数据库建议
 
 第一阶段新增：
@@ -308,9 +318,8 @@ sequenceDiagram
 
 - 第一轮生成公众号文章后，Working Memory 写入 brief、标题、提纲摘要、正文摘要和 `lastArtifactId`。
 - 用户说“标题更吸引人一点”时，系统基于上一版文章修改，不重新空写。
-- 用户说“第三段加上活动时间”时，系统能读取上一版结构化正文并定向修改。
+- 用户要求修改指定章节时，系统能读取上一版结构化正文并定向修改。
 - 刷新页面后继续会话，Working Memory 不丢失。
 - 新建 Conversation 不继承旧 Conversation 的记忆。
 - RunContext 创建后保持冻结，不受后续用户消息影响。
 - 最终正文不包含内部上下文、Agent 过程、审阅报告或用户原始长 prompt。
-

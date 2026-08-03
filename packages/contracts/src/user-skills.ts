@@ -68,6 +68,7 @@ export const userSkillMentionSchema = z.object({
 });
 
 export const resolvedUserSkillAssetSchema = z.object({
+  id: z.string().trim().min(1),
   key: z.string().trim().min(1),
   type: userSkillAssetTypeSchema,
   usage: z.string().trim().min(1).max(300),

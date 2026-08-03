@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   ClarificationChatMessage,
   ConversationListItem,
+  CreationMode,
   GenerateWechatArticleResponse,
   ResourceSummary,
   ResultNoticeChatMessage,
@@ -37,7 +38,7 @@ import {
 import { getMe, logout } from "./lib/auth-api";
 import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
 import { disableUserSkill, importUserSkill, listUserSkills } from "./lib/user-skills-api";
-import { buildWechatPreviewHtml } from "./lib/wechat-preview";
+import { resolveWechatPreviewAssetUrls } from "./lib/wechat-preview";
 
 type PreviewMode = "preview" | "source";
 type UploadDraftStatus = "preparing" | "uploading" | "failed";
@@ -748,6 +749,7 @@ export default function HomePage() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
   const [layoutSkill, setLayoutSkill] = useState<BuiltInLayoutSkillId>("auto");
+  const [creationMode, setCreationMode] = useState<CreationMode>("auto");
   const [mode, setMode] = useState<PreviewMode>("preview");
   const [result, setResult] = useState<GenerateWechatArticleResponse | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -779,20 +781,14 @@ export default function HomePage() {
     void getMe().then((result) => setCurrentUser(result.user)).catch(() => undefined);
   }, []);
 
-  const previewResources = assets.length > 0 ? assets : Object.values(resourcesById);
   const hasActiveUploads = activeUploadJobs > 0 || uploadDrafts.some((upload) => upload.status !== "failed");
   const isGenerating = Boolean(chat.activeRunId);
   const sendDisabled = busy || hasActiveUploads || isGenerating;
   const sendButtonWaiting = busy || hasActiveUploads || isGenerating;
-  const html = result ? buildWechatPreviewHtml(
-    result.document,
-    previewResources.map((resource) => ({
-      id: resource.id,
-      name: resource.originalName,
-      dataUrl: resolveResourceUrl(resource.contentUrl)
-    })),
-    layoutSkill
-  ) : starterHtml;
+  const html = result?.render.html ?? starterHtml;
+  const previewHtml = result
+    ? resolveWechatPreviewAssetUrls(html, resolveResourceUrl)
+    : html;
   const warningCount = result?.render.warnings.length ?? 0;
 
   useEffect(() => {
@@ -1103,6 +1099,8 @@ export default function HomePage() {
         content,
         ...(uploadSessionId ? { uploadSessionId } : {}),
         resourceIds,
+        creationMode,
+        inheritedResourceIds: [],
         layoutSkillId: layoutSkill,
         skillMentions: selectedUserSkill?.installedVersionId
           ? [{
@@ -1477,6 +1475,19 @@ export default function HomePage() {
                   上传资料
                 </button>
                 <label className="inline-select">
+                  <span>创作模式</span>
+                  <select
+                    value={creationMode}
+                    onChange={(event) => setCreationMode(event.target.value as CreationMode)}
+                    aria-label="选择创作模式"
+                  >
+                    <option value="auto">智能判断</option>
+                    <option value="new">重新创作</option>
+                    <option value="revise">继续修改</option>
+                    <option value="continue">继续扩写</option>
+                  </select>
+                </label>
+                <label className="inline-select">
                   <span>@ Skill</span>
                   <select
                     value={layoutSkill}
@@ -1536,7 +1547,7 @@ export default function HomePage() {
 
           <div className={mode === "preview" ? "phone" : "source-view"}>
             {mode === "preview" ? (
-              <iframe title="公众号文章预览" srcDoc={html} sandbox="" />
+              <iframe title="公众号文章预览" srcDoc={previewHtml} sandbox="" />
             ) : (
               <textarea readOnly value={html} aria-label="微信公众号 HTML 源码" />
             )}

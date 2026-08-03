@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ArticleDocument } from "@mediaforge/contracts";
+import type { ArticleDocument, LayoutPlan } from "@mediaforge/contracts";
 import { renderWechatArticle } from "./wechat-renderer";
 
 describe("renderWechatArticle", () => {
@@ -22,6 +22,29 @@ describe("renderWechatArticle", () => {
     expect(result.html).not.toContain("<script");
     expect(result.html).not.toContain("<style");
     expect(result.html).not.toContain("class=");
+  });
+
+  it("applies only validated layout plan tokens", () => {
+    const document: ArticleDocument = {
+      type: "doc",
+      attrs: { title: "舞蹈获奖", scenario: "celebration" },
+      content: [{ id: "heading_1", type: "heading", attrs: { sectionIndex: 0 }, content: [{ type: "text", text: "舞台时刻" }] }]
+    };
+    const plan: LayoutPlan = {
+      theme: "celebration",
+      palette: { primary: "#C51D5D", accent: "#F2B134", text: "#20252B", surface: "#F7F8F6" },
+      titleTreatment: "poster",
+      introTreatment: "highlight-panel",
+      sectionTreatment: "labelled",
+      imageTreatment: "full-width",
+      blocks: [{ kind: "title" }, { kind: "section", sectionIndex: 0 }]
+    };
+
+    const result = renderWechatArticle(document, plan);
+    expect(result.rendererVersion).toBe("wechat-layout-plan-v2");
+    expect(result.html).toContain("#C51D5D");
+    expect(result.html).toContain("SECTION 01");
+    expect(result.html).not.toContain("<script");
   });
 
   it("warns for non-https images and video placeholders", () => {

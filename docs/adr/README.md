@@ -29,3 +29,4 @@ ADR 用于记录影响长期架构的决策。
 | `007-single-system-user-and-admin-role.md` | Proposed | 保留独立认证服务，将产品权限模型收敛为单系统 `admin/user` 双角色。 |
 | `008-database-model-configuration-and-capability-routing.md` | Proposed | 模型连接、模型配置和默认能力路由入库，并对供应商凭据加密。 |
 | `009-generation-and-model-usage-metering.md` | Proposed | 将用户生成事件与真实模型调用分离计量，支持用户和模型双维度统计。 |
+| `010-structured-content-and-layout-plan.md` | Accepted | 采用结构化正文、受控 LayoutPlan 和可信 Renderer，禁止生产 Demo 回退。 |

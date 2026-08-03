@@ -153,24 +153,35 @@ function createRunContext(
   input: CreationRunContextInput,
   memory: ConversationWorkingMemory
 ): CreationRunContext {
-  const revisionIntent = isRevisionIntent(input.userInput, memory)
+  const currentInstruction = input.currentInstruction ?? input.userInput;
+  const creationMode = input.creationMode ?? (
+    isNewCreationIntent(currentInstruction) || !memory.lastArtifactId
+      ? "new"
+      : isRevisionIntent(currentInstruction, memory)
+        ? "revise"
+        : "continue"
+  );
+  const revisionIntent = creationMode === "revise"
     ? {
-        target: inferRevisionTarget(input.userInput),
-        instruction: clip(input.userInput, 1000),
+        target: inferRevisionTarget(currentInstruction),
+        instruction: clip(currentInstruction, 1000),
         createdAt: now()
       }
     : undefined;
-  const memorySnapshot = isNewCreationIntent(input.userInput)
+  const memorySnapshot = creationMode === "new"
     ? createEmptyMemory(conversationId, contextVersion)
     : memory;
 
   return creationRunContextSchema.parse({
     ...input,
+    currentInstruction,
+    creationMode,
     contextVersion,
     memory: {
       brief: memorySnapshot.brief,
       selectedTitle: memorySnapshot.selectedTitle,
       outline: memorySnapshot.outline,
+      layoutPlan: memorySnapshot.layoutPlan,
       draftSummary: memorySnapshot.draftSummary,
       materialSummary: memorySnapshot.materialSummary,
       userConstraints: memorySnapshot.userConstraints,
@@ -213,18 +224,26 @@ function memoryFromGraphResult(
           callToAction: state.outline.callToAction
         }
       : previous.outline,
+    layoutPlan: state.layoutPlan ?? previous.layoutPlan,
     draftSummary: state.draft
       ? {
           artifactId: artifact.id,
           title: state.draft.title,
-          paragraphCount: state.draft.paragraphs.length,
+          paragraphCount: 2 + state.draft.sections.reduce((count, section) => count + section.paragraphs.length, 0),
           sectionTitles,
-          keyPoints: state.draft.paragraphs.slice(0, 6).map((paragraph) => clip(paragraph, 120)),
+          keyPoints: state.draft.sections.flatMap((section) => section.paragraphs).slice(0, 6).map((paragraph) => clip(paragraph, 120)),
           tone: state.brief?.tone ?? previous.draftSummary?.tone,
           audience: state.brief?.audience ?? previous.draftSummary?.audience
         }
       : previous.draftSummary,
-    materialSummary: previous.materialSummary,
+    materialSummary: state.materials
+      ? [
+          ...previous.materialSummary.filter((previousItem) =>
+            !state.materials!.items.some((currentItem) => currentItem.resourceId === previousItem.resourceId)
+          ),
+          ...state.materials.items
+        ].slice(-50)
+      : previous.materialSummary,
     userConstraints: previous.userConstraints,
     revisionIntent: undefined,
     lastArtifactId: artifact.id,

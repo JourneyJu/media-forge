@@ -1,4 +1,7 @@
 import { createCreationRunWorker } from "./worker";
+import { assertProductionModelMode } from "../model-mode";
+
+assertProductionModelMode();
 
 const worker = createCreationRunWorker();
 
