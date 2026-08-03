@@ -323,7 +323,8 @@ export const adminConsole = {
           : "Reply OK.";
       const requestBody: Record<string, unknown> = {
         model: row.model_id,
-        max_tokens: row.supports_structured_output ? 16 : 2,
+        // Reasoning models may consume part of the output budget before emitting content.
+        max_tokens: row.supports_structured_output ? 128 : 16,
         messages: [{ role: "user", content }]
       };
       if (row.supports_structured_output) requestBody.response_format = { type: "json_object" };
