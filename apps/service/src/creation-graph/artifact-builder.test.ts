@@ -132,6 +132,54 @@ describe("artifact builder guard", () => {
     expect(result.document.attrs.scenario).toBe("celebration");
   });
 
+  it("falls back to image plan resources when draft assetRefs are missing", () => {
+    const draft = {
+      ...validDraft(),
+      sections: validDraft().sections.map((section) => ({ ...section, assetRefs: [] }))
+    };
+    const result = buildArticleDocument({
+      userInput: "涓哄皬鍏拌姳鑸炶箞鑾峰鍐欎竴绡囧叕浼楀彿鏂囩珷",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft,
+      imagePlan,
+      layoutPlan: {
+        ...layoutPlan,
+        blocks: [
+          ...layoutPlan.blocks,
+          { kind: "image", sectionIndex: 1, assetRef: "dance_1" }
+        ]
+      }
+    });
+
+    expect(result.document.content.find((block) => block.type === "image")?.attrs).toMatchObject({
+      resourceId: "dance_1",
+      sectionIndex: 1
+    });
+  });
+
+  it("places an unused cover image after the intro", () => {
+    const result = buildArticleDocument({
+      userInput: "涓哄皬鍏拌姳鑸炶箞鑾峰鍐欎竴绡囧叕浼楀彿鏂囩珷",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft: {
+        ...validDraft(),
+        sections: validDraft().sections.map((section) => ({ ...section, assetRefs: [] }))
+      },
+      imagePlan: { items: [{ placement: "cover", description: "cover image", resourceId: "dance_1" }] },
+      layoutPlan
+    });
+
+    expect(result.document.content[0]?.type).toBe("callout");
+    expect(result.document.content[1]?.type).toBe("image");
+    expect(result.document.content[1]?.attrs?.resourceId).toBe("dance_1");
+  });
+
   it("resolves a frozen Skill qrcode only into the ending area", () => {
     const result = buildArticleDocument({
       userInput: "为小兰花舞蹈获奖写一篇公众号文章",

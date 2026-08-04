@@ -9,6 +9,7 @@ import {
   type ArtifactValidationResult,
   type ContentPlan,
   type CreativeBrief,
+  type ImagePlanItem,
   type GenerateWechatArticleResponse,
   type ImagePlan,
   type LayoutPlan,
@@ -119,6 +120,19 @@ function textBlock(type: "paragraph" | "callout" | "quote" | "footer", text: str
   return { id: randomUUID(), type, attrs, content: [{ type: "text" as const, text }] };
 }
 
+function imageBlock(resourceId: string, planned: ImagePlanItem, sectionIndex?: number) {
+  return {
+    id: randomUUID(),
+    type: "image" as const,
+    attrs: {
+      resourceId,
+      src: `/resources/${encodeURIComponent(resourceId)}/content`,
+      alt: planned.description,
+      ...(sectionIndex !== undefined ? { sectionIndex } : {})
+    }
+  };
+}
+
 export function buildArticleDocument(input: ArtifactBuilderInput): {
   document: ArticleDocument;
   validation: ArtifactValidationResult;
@@ -136,8 +150,32 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
       .filter((item) => item.resourceId)
       .map((item) => [item.resourceId!, item])
   );
+  const draftAssetRefs = new Set(input.draft.sections.flatMap((section) => section.assetRefs));
+  const usedResourceIds = new Set<string>();
+  const coverImage = input.imagePlan.items.find((item) =>
+    item.placement === "cover" && item.resourceId && !draftAssetRefs.has(item.resourceId)
+  );
+  if (coverImage?.resourceId) {
+    content.push(imageBlock(coverImage.resourceId, coverImage));
+    usedResourceIds.add(coverImage.resourceId);
+  }
+  const layoutSectionImages = new Map<number, ImagePlanItem[]>();
+  for (const block of input.layoutPlan.blocks) {
+    if (block.kind !== "image" || block.sectionIndex === undefined || !block.assetRef) continue;
+    const planned = plannedImages.get(block.assetRef);
+    if (!planned || planned.placement !== "section") continue;
+    layoutSectionImages.set(block.sectionIndex, [...(layoutSectionImages.get(block.sectionIndex) ?? []), planned]);
+  }
+  const unassignedSectionImages = input.imagePlan.items.filter((item) =>
+    item.placement === "section"
+    && item.resourceId
+    && !draftAssetRefs.has(item.resourceId)
+    && !input.layoutPlan.blocks.some((block) => block.kind === "image" && block.assetRef === item.resourceId)
+  );
+  let unassignedImageIndex = 0;
 
   input.draft.sections.forEach((section, sectionIndex) => {
+    let insertedSectionImage = false;
     content.push({
       id: randomUUID(),
       type: "heading",
@@ -150,17 +188,23 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
     if (section.emphasis) content.push(textBlock("quote", section.emphasis, { sectionIndex }));
     for (const assetRef of section.assetRefs) {
       const planned = plannedImages.get(assetRef);
-      if (!planned) continue;
-      content.push({
-        id: randomUUID(),
-        type: "image",
-        attrs: {
-          resourceId: assetRef,
-          src: `/resources/${encodeURIComponent(assetRef)}/content`,
-          alt: planned.description,
-          sectionIndex
-        }
-      });
+      if (!planned || usedResourceIds.has(assetRef)) continue;
+      content.push(imageBlock(assetRef, planned, sectionIndex));
+      usedResourceIds.add(assetRef);
+      insertedSectionImage = true;
+    }
+    if (!insertedSectionImage) {
+      const fallback = layoutSectionImages.get(sectionIndex)?.find((item) =>
+        item.resourceId && !usedResourceIds.has(item.resourceId)
+      ) ?? unassignedSectionImages.slice(unassignedImageIndex).find((item) =>
+        item.resourceId && !usedResourceIds.has(item.resourceId)
+      );
+      if (fallback?.resourceId) {
+        content.push(imageBlock(fallback.resourceId, fallback, sectionIndex));
+        usedResourceIds.add(fallback.resourceId);
+        const index = unassignedSectionImages.indexOf(fallback);
+        if (index >= unassignedImageIndex) unassignedImageIndex = index + 1;
+      }
     }
   });
 

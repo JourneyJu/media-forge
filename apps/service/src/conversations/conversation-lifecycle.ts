@@ -218,6 +218,20 @@ function revisionTarget(input: string): NonNullable<ConversationWorkingMemory["r
   return "all";
 }
 
+export function effectiveRunResourceIds(input: {
+  creationMode: CreationRunContext["creationMode"];
+  currentResourceIds: string[];
+  inheritedResourceIds: string[];
+  artifactResourceIds: string[];
+}): string[] {
+  if (input.creationMode === "new") return [...new Set(input.currentResourceIds)];
+  return [...new Set([
+    ...input.currentResourceIds,
+    ...input.inheritedResourceIds,
+    ...(input.creationMode === "revise" ? input.artifactResourceIds : [])
+  ])];
+}
+
 function createRunContext(
   conversationId: string,
   contextVersion: number,
@@ -265,21 +279,29 @@ function createRunContext(
     previousMemory: memorySnapshot,
     creationMode
   });
-  const selectedResources = new Set(input.resourceIds);
+  const resourceIds = effectiveRunResourceIds({
+    creationMode,
+    currentResourceIds: input.currentResourceIds,
+    inheritedResourceIds: resourceContext.inheritedResourceIds,
+    artifactResourceIds: resourceContext.artifactResourceIds
+  });
+  const selectedResources = new Set(resourceIds);
   const materialSummary = new Map(
     resourceContext.materialSummary
       .filter((item) => selectedResources.has(item.resourceId))
       .map((item) => [item.resourceId, item])
   );
-  for (const item of input.currentMaterialSummary) materialSummary.set(item.resourceId, item);
+  for (const item of input.currentMaterialSummary) {
+    if (selectedResources.has(item.resourceId)) materialSummary.set(item.resourceId, item);
+  }
   return creationRunContextSchema.parse({
     userInput: input.userInput,
-    resourceIds: input.resourceIds,
+    resourceIds,
     currentInstruction: input.userInput,
     intentResolution,
     creationMode,
     currentResourceIds: input.currentResourceIds,
-    inheritedResourceIds: input.inheritedResourceIds,
+    inheritedResourceIds: resourceContext.inheritedResourceIds,
     resourceContext,
     skillId: input.skillId,
     selectedSkills: input.selectedSkills,
@@ -531,12 +553,36 @@ export function createConversationLifecycleService(
     const result = await client.query<{ id: string }>(
       `select id from resources
        where owner_id = $1 and conversation_id = $2 and status = 'attached'
+         and content_type like 'image/%'
          and id = any($3::text[])`,
       [ownerId, conversationId, uniqueIds]
     );
     if (result.rows.length !== uniqueIds.length) throw new Error("RUN_CONTEXT_INVALID");
     const allowed = new Set(result.rows.map((row) => row.id));
     return uniqueIds.filter((id) => allowed.has(id));
+  }
+
+  async function resolveHistoricalImageResourceIds(
+    client: PoolClient,
+    ownerId: string,
+    conversationId: string,
+    limit = 30
+  ): Promise<string[]> {
+    const result = await client.query<{ id: string }>(
+      `select r.id
+       from resources r
+       left join message_resources mr on mr.resource_id = r.id
+       left join conversation_messages m on m.id = mr.message_id
+       where r.owner_id = $1
+         and r.conversation_id = $2
+         and r.status = 'attached'
+         and r.content_type like 'image/%'
+       group by r.id
+       order by min(coalesce(m.created_at, r.created_at)), min(coalesce(mr.display_order, 0)), r.id
+       limit $3`,
+      [ownerId, conversationId, limit]
+    );
+    return result.rows.map((row) => row.id);
   }
 
   async function getIdempotentResponse(
@@ -741,12 +787,19 @@ export function createConversationLifecycleService(
            where id = $1`,
           [conversationId, contextVersion, createdAt]
         );
-        const inheritedResourceIds = await resolveInheritedResourceIds(
+        const explicitInheritedResourceIds = await resolveInheritedResourceIds(
           client,
           ownerId,
           conversationId,
           input.inheritedResourceIds
         );
+        const fallbackInheritedResourceIds = explicitInheritedResourceIds.length > 0
+          ? []
+          : await resolveHistoricalImageResourceIds(client, ownerId, conversationId);
+        const inheritedResourceIds = [...new Set([
+          ...explicitInheritedResourceIds,
+          ...fallbackInheritedResourceIds
+        ].filter((resourceId) => !input.resourceIds.includes(resourceId)))].slice(0, 30);
         const runResourceIds = [...new Set([...input.resourceIds, ...inheritedResourceIds])];
         const run = await insertRun(
           client,

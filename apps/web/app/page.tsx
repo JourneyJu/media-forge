@@ -39,6 +39,7 @@ import { getMe, logout } from "./lib/auth-api";
 import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
 import { disableUserSkill, importUserSkill, listUserSkills } from "./lib/user-skills-api";
 import { resolveWechatPreviewAssetUrls } from "./lib/wechat-preview";
+import { collectInheritedImageResourceIds } from "./lib/resource-inheritance";
 
 type PreviewMode = "preview" | "source";
 type UploadDraftStatus = "preparing" | "uploading" | "failed";
@@ -1284,6 +1285,12 @@ export default function HomePage() {
       skill.id === selectedUserSkillId && skill.installed && skill.status === "active"
     );
     const resourceIds = assets.map((asset) => asset.id);
+    const inheritedResourceIds = collectInheritedImageResourceIds(
+      chat.messages,
+      resourcesById,
+      resourceIds,
+      creationMode
+    );
     const optimisticMessage = createLocalUserMessage(content, resourceIds);
     dispatch({ type: "user_message_added", message: optimisticMessage });
     setTopic("");
@@ -1298,7 +1305,7 @@ export default function HomePage() {
         ...(uploadSessionId ? { uploadSessionId } : {}),
         resourceIds,
         creationMode,
-        inheritedResourceIds: [],
+        inheritedResourceIds,
         layoutSkillId: layoutSkill,
         skillMentions: selectedUserSkill?.installedVersionId
           ? [{
