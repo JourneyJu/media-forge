@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generateStructuredJsonWithGateway, readModelGatewayConfig } from "./model-gateway";
+import { effectiveModelTimeoutMs, generateStructuredJsonWithGateway, readModelGatewayConfig } from "./model-gateway";
 
 const originalEnv = { ...process.env };
 
@@ -44,6 +44,12 @@ describe("readModelGatewayConfig", () => {
 });
 
 describe("generateStructuredJsonWithGateway", () => {
+  it("raises short database timeouts to the production safety floor", () => {
+    expect(effectiveModelTimeoutMs(60_000)).toBe(120_000);
+    process.env.MODEL_GATEWAY_MIN_TIMEOUT_MS = "180000";
+    expect(effectiveModelTimeoutMs(60_000)).toBe(180_000);
+  });
+
   it("includes the output contract in the system prompt", async () => {
     const fetchMock = vi.fn().mockResolvedValue(completion('{"items":[]}'));
     vi.stubGlobal("fetch", fetchMock);
@@ -103,6 +109,61 @@ describe("generateStructuredJsonWithGateway", () => {
       type: "retry",
       phase: "retrying"
     }));
+  });
+
+  it("retries request aborts inside the same agent call", async () => {
+    process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS = "0";
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new DOMException("This operation was aborted", "AbortError"))
+      .mockResolvedValueOnce(completion('{"items":[]}'));
+    const onProgress = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateStructuredJsonWithGateway(config, {
+      agentName: "MaterialAgent",
+      systemPrompt: "Analyze materials.",
+      outputContract: '{"items":[]}',
+      input: { resourceIds: [] },
+      schema: z.object({ items: z.array(z.string()) }),
+      onProgress
+    });
+
+    expect(result).toEqual({ items: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      type: "retry",
+      phase: "retrying"
+    }));
+  });
+
+  it("retries stream read aborts inside the same agent call", async () => {
+    process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS = "0";
+    const abortedStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          'data: {"choices":[{"delta":{"reasoning_content":"working"}}]}\n\n'
+        ));
+        controller.error(new DOMException("This operation was aborted", "AbortError"));
+      }
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(abortedStream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      }))
+      .mockResolvedValueOnce(completion('{"items":[]}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateStructuredJsonWithGateway(config, {
+      agentName: "MaterialAgent",
+      systemPrompt: "Analyze materials.",
+      outputContract: '{"items":[]}',
+      input: { resourceIds: [] },
+      schema: z.object({ items: z.array(z.string()) })
+    });
+
+    expect(result).toEqual({ items: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("streams reasoning while buffering structured content", async () => {

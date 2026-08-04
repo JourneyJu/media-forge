@@ -24,10 +24,11 @@ export function parseRedisConnection(redisUrl: string): RedisConnectionOptions {
 }
 
 export function createCreationRunQueue(redisUrl = getRedisUrl()): Queue<CreationRunJob> {
+  const attempts = Number(process.env.CREATION_RUN_QUEUE_ATTEMPTS ?? 1);
   return new Queue<CreationRunJob>(creationRunQueueName, {
     connection: parseRedisConnection(redisUrl),
     defaultJobOptions: {
-      attempts: 3,
+      attempts: Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 1,
       backoff: {
         type: "exponential",
         delay: 2_000

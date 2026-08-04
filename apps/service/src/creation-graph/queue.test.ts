@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { creationRunQueueName, parseRedisConnection } from "./queue";
+import { afterEach, describe, expect, it } from "vitest";
+import { createCreationRunQueue, creationRunQueueName, parseRedisConnection } from "./queue";
+
+afterEach(() => {
+  delete process.env.CREATION_RUN_QUEUE_ATTEMPTS;
+});
 
 describe("creation run queue", () => {
   it("uses the product queue name", () => {
@@ -32,5 +36,20 @@ describe("creation run queue", () => {
       host: "localhost",
       port: 6379
     });
+  });
+
+  it("does not retry the whole graph by default", async () => {
+    const queue = createCreationRunQueue("redis://localhost:6379");
+
+    expect(queue.opts.defaultJobOptions?.attempts).toBe(1);
+    await queue.close();
+  });
+
+  it("keeps queue-level retry behind an explicit escape hatch", async () => {
+    process.env.CREATION_RUN_QUEUE_ATTEMPTS = "3";
+    const queue = createCreationRunQueue("redis://localhost:6379");
+
+    expect(queue.opts.defaultJobOptions?.attempts).toBe(3);
+    await queue.close();
   });
 });

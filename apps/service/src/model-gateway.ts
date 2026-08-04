@@ -40,6 +40,15 @@ function modelGatewayRetryAttempts(): number {
   return Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), 5) : 0;
 }
 
+export function effectiveModelTimeoutMs(configuredTimeoutMs: number): number {
+  const minTimeoutMs = Number(process.env.MODEL_GATEWAY_MIN_TIMEOUT_MS ?? 120_000);
+  const safeConfigured = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+    ? configuredTimeoutMs
+    : 60_000;
+  if (!Number.isFinite(minTimeoutMs) || minTimeoutMs <= 0) return safeConfigured;
+  return Math.min(Math.max(safeConfigured, Math.floor(minTimeoutMs)), 300_000);
+}
+
 function modelGatewayRetryDelayMs(attempt: number): number {
   const baseDelayMs = Number(process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS ?? 500);
   if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) return 0;
@@ -51,9 +60,8 @@ function isAbortError(error: unknown): boolean {
 }
 
 function isTransientFetchError(error: unknown): boolean {
-  return error instanceof TypeError || (
+  return isAbortError(error) || error instanceof TypeError || (
     error instanceof Error
-    && !isAbortError(error)
     && /econnreset|etimedout|socket|network|fetch failed/iu.test(error.message)
   );
 }
@@ -65,14 +73,15 @@ function sleep(ms: number): Promise<void> {
 async function fetchChatCompletionWithRetry(
   config: ModelGatewayConfig,
   body: Record<string, unknown>,
-  signal: AbortSignal,
   onProgress: ((event: ModelGatewayProgressEvent) => void | Promise<void>) | undefined,
   retryCountOffset: number
-): Promise<Response> {
+): Promise<{ response: Response; finish: () => void }> {
   const maxRetries = modelGatewayRetryAttempts();
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
     try {
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: "POST",
@@ -82,13 +91,15 @@ async function fetchChatCompletionWithRetry(
         },
         body: JSON.stringify(body),
         redirect: "error",
-        signal
+        signal: controller.signal
       });
       if (!transientGatewayStatuses.has(response.status) || attempt >= maxRetries) {
-        return response;
+        return { response, finish: () => clearTimeout(timeout) };
       }
       lastError = new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+      clearTimeout(timeout);
     } catch (error) {
+      clearTimeout(timeout);
       if (!isTransientFetchError(error) || attempt >= maxRetries) throw error;
       lastError = error;
     }
@@ -204,7 +215,7 @@ export async function resolveModelGatewayConfig(routeKey: ModelRouteKey): Promis
     baseUrl: resolved.baseUrl,
     apiKey: resolved.apiKey,
     model: resolved.modelId,
-    timeoutMs: resolved.timeoutMs,
+    timeoutMs: effectiveModelTimeoutMs(resolved.timeoutMs),
     modelConfigId: resolved.modelConfigId
   };
 }
@@ -314,8 +325,6 @@ export async function generateStructuredJsonWithGateway<T>(
     };
   }
 ): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
   const startedAt = Date.now();
   const usageId = options.usage
     ? await adminConsole.startModelUsage(options.usage)
@@ -352,39 +361,56 @@ export async function generateStructuredJsonWithGateway<T>(
         response_format: { type: "json_object" },
         messages
       };
-      let response = await fetchChatCompletionWithRetry(
+      let fetched = await fetchChatCompletionWithRetry(
         config,
         {
           ...requestBody,
           stream: true,
           stream_options: { include_usage: true }
         },
-        controller.signal,
         options.onProgress,
         attempt
       );
+      let response = fetched.response;
 
       if ([400, 404, 422].includes(response.status)) {
+        fetched.finish();
         await options.onProgress?.({
           type: "phase",
           phase: "generating",
           summary: "模型不支持流式响应，正在等待完整结果",
           retryCount: attempt
         });
-        response = await fetchChatCompletionWithRetry(
+        fetched = await fetchChatCompletionWithRetry(
           config,
           requestBody,
-          controller.signal,
           options.onProgress,
           attempt
         );
+        response = fetched.response;
       }
 
-      if (!response.ok) {
-        throw new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+      let payload: ChatCompletionResponse;
+      try {
+        if (!response.ok) {
+          throw new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+        }
+        payload = await readCompletionResponse(response, options.onProgress, attempt);
+      } catch (error) {
+        if (isTransientFetchError(error) && attempt === 0) {
+          await options.onProgress?.({
+            type: "retry",
+            phase: "retrying",
+            summary: "模型服务短暂不可用，正在自动重试",
+            retryCount: attempt + 1
+          });
+          await sleep(modelGatewayRetryDelayMs(attempt));
+          continue;
+        }
+        throw error;
+      } finally {
+        fetched.finish();
       }
-
-      const payload = await readCompletionResponse(response, options.onProgress, attempt);
       providerRequestId = payload.id ?? providerRequestId;
       inputTokens += payload.usage?.prompt_tokens ?? 0;
       outputTokens += payload.usage?.completion_tokens ?? 0;
@@ -441,7 +467,5 @@ export async function generateStructuredJsonWithGateway<T>(
       });
     }
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
 }
