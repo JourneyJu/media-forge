@@ -12,6 +12,7 @@ import type {
   CreationRunJob,
   CreationRunStatus,
   GenerateWechatArticleResponse,
+  ResourceSummary,
   RunEvent,
   RunEventType,
   SubmitRunClarificationRequest
@@ -102,6 +103,18 @@ interface ResourceRow {
   created_at: Date;
 }
 
+interface UploadedResourceRow {
+  id: string;
+  upload_session_id: string | null;
+  conversation_id: string | null;
+  status: ResourceSummary["status"];
+  source: ResourceSummary["source"];
+  original_name: string;
+  content_type: string;
+  size_bytes: string | number;
+  created_at: Date;
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -112,16 +125,49 @@ function clip(value: string, maxLength: number): string {
 
 export function mergeClarificationIntoRunContext(
   graphContext: CreationRunContext,
-  answers: SubmitRunClarificationRequest["answers"]
+  answers: SubmitRunClarificationRequest["answers"],
+  resources: ResourceSummary[] = []
 ): CreationRunContext {
   const clarificationText = answers
     .map((answer) => `${answer.questionId}: ${answer.value}`)
     .join("\n");
-  const mergedUserInput = `${graphContext.userInput}\n\n补充信息：\n${clarificationText}`;
+  const newResourceIds = resources.map((resource) => resource.id);
+  const currentResourceIds = [...new Set([...graphContext.currentResourceIds, ...newResourceIds])];
+  const resourceIds = [...new Set([...graphContext.resourceIds, ...newResourceIds])];
+  const baseResourceContext = graphContext.resourceContext ?? graphContext.memory.resourceContext;
+  const resourceSummaries: ConversationWorkingMemory["resourceContext"]["materialSummary"] = resources.map((resource) => ({
+    resourceId: resource.id,
+    type: resource.contentType.startsWith("image/") ? "image" : "document",
+    description: `Resource ${resource.id}: ${clip(resource.originalName, 180)} (${resource.contentType}, ${resource.source})`,
+    originalName: resource.originalName,
+    contentType: resource.contentType,
+    suggestedUsage: "Clarification attachment for the current run.",
+    quality: "medium"
+  }));
+  const materialSummary = [
+    ...graphContext.memory.materialSummary.filter((item) =>
+      !resourceSummaries.some((resource) => resource.resourceId === item.resourceId)
+    ),
+    ...resourceSummaries
+  ].slice(-50);
+  const resourceContextMaterialSummary = [
+    ...baseResourceContext.materialSummary.filter((item) =>
+      !resourceSummaries.some((resource) => resource.resourceId === item.resourceId)
+    ),
+    ...resourceSummaries
+  ].slice(-50);
+  const mergedUserInput = `${graphContext.userInput}\n\nAdditional information:\n${clarificationText}`;
   return {
     ...graphContext,
     userInput: mergedUserInput,
     currentInstruction: mergedUserInput,
+    resourceIds,
+    currentResourceIds,
+    resourceContext: {
+      ...baseResourceContext,
+      currentResourceIds,
+      materialSummary: resourceContextMaterialSummary
+    },
     memory: {
       ...graphContext.memory,
       instructionMemory: {
@@ -131,7 +177,7 @@ export function mergeClarificationIntoRunContext(
           {
             messageId: "clarification",
             content: clip(clarificationText, 4000),
-            reason: "用户补充了追问信息"
+            reason: "User provided clarification"
           }
         ]
       },
@@ -139,6 +185,12 @@ export function mergeClarificationIntoRunContext(
         ...graphContext.memory.userConstraints,
         clip(clarificationText, 500)
       ],
+      resourceContext: {
+        ...graphContext.memory.resourceContext,
+        currentResourceIds,
+        materialSummary: resourceContextMaterialSummary
+      },
+      materialSummary,
       revisionIntent: {
         target: "all",
         instruction: clip(clarificationText, 1000),
@@ -147,7 +199,6 @@ export function mergeClarificationIntoRunContext(
     }
   };
 }
-
 function createEmptyMemory(conversationId: string, contextVersion: number): ConversationWorkingMemory {
   return {
     conversationId,
@@ -418,6 +469,22 @@ function toResource(row: ResourceRow): ConversationResource {
   };
 }
 
+function toResourceSummary(row: UploadedResourceRow): ResourceSummary {
+  return {
+    id: row.id,
+    uploadSessionId: row.upload_session_id,
+    conversationId: row.conversation_id,
+    status: row.status,
+    source: row.source,
+    originalName: row.original_name,
+    contentType: row.content_type,
+    sizeBytes: Number(row.size_bytes),
+    previewUrl: `/resources/${row.id}/preview`,
+    contentUrl: `/resources/${row.id}/content`,
+    createdAt: row.created_at.toISOString()
+  };
+}
+
 export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/mediaforge") {
   const pool = new Pool({ connectionString: databaseUrl });
 
@@ -492,6 +559,55 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
          updated_at = now()`,
       [memory.conversationId, memory.contextVersion, JSON.stringify(memory)]
     );
+  }
+
+  async function attachClarificationResourcesWithClient(
+    client: PoolClient,
+    ownerId: string,
+    conversationId: string,
+    messageId: string,
+    uploadSessionId: string | undefined,
+    resourceIds: string[]
+  ): Promise<ResourceSummary[]> {
+    if (resourceIds.length === 0) return [];
+    const uniqueIds = [...new Set(resourceIds)];
+    const result = await client.query<UploadedResourceRow>(
+      `select id, upload_session_id, conversation_id, status, source, original_name, content_type, size_bytes, created_at
+       from resources
+       where owner_id = $1 and id = any($2::text[]) and status = 'staged'
+         and ($3::text is null or upload_session_id = $3)
+       for update`,
+      [ownerId, uniqueIds, uploadSessionId ?? null]
+    );
+    if (result.rows.length !== uniqueIds.length) throw new Error("RESOURCE_NOT_STAGED");
+    const byId = new Map(result.rows.map((row) => [row.id, row]));
+    for (const [index, resourceId] of uniqueIds.entries()) {
+      const row = byId.get(resourceId);
+      if (!row) throw new Error("RESOURCE_NOT_STAGED");
+      await client.query(
+        `update resources
+         set conversation_id = $2, status = 'attached', updated_at = now()
+         where id = $1`,
+        [resourceId, conversationId]
+      );
+      await client.query(
+        `insert into message_resources (message_id, resource_id, display_order, created_at)
+         values ($1, $2, $3, now())`,
+        [messageId, resourceId, index]
+      );
+    }
+    if (uploadSessionId) {
+      await client.query(
+        `update upload_sessions set status = 'consumed', consumed_at = now()
+         where id = $1 and owner_id = $2 and status = 'active'`,
+        [uploadSessionId, ownerId]
+      );
+    }
+    return uniqueIds.map((id) => toResourceSummary({
+      ...byId.get(id)!,
+      conversation_id: conversationId,
+      status: "attached"
+    }));
   }
 
   return {
@@ -715,6 +831,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
     },
 
     async submitClarification(
+      ownerId: string,
       runId: string,
       input: SubmitRunClarificationRequest
     ): Promise<CreationRun> {
@@ -765,12 +882,24 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
           [answerMessageId, run.conversation_id, input.answers.map((answer) => answer.value).join("；")]
         );
         await client.query(
+          "update conversation_messages set resource_ids_json = $2 where id = $1",
+          [answerMessageId, JSON.stringify(input.resourceIds)]
+        );
+        const attachedResources = await attachClarificationResourcesWithClient(
+          client,
+          ownerId,
+          run.conversation_id,
+          answerMessageId,
+          input.uploadSessionId,
+          input.resourceIds
+        );
+        await client.query(
           `update conversations
            set updated_at = now(), last_interaction_at = now(), context_version = context_version + 1
            where id = $1`,
           [run.conversation_id]
         );
-        const nextContext = mergeClarificationIntoRunContext(graphContext, input.answers);
+        const nextContext = mergeClarificationIntoRunContext(graphContext, input.answers, attachedResources);
         const nextContextVersion = graphRun.context_version + 1;
         const nextMemory = normalizeMemory(
           run.conversation_id,
@@ -779,6 +908,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
             ...graphContext.memory,
             instructionMemory: nextContext.memory.instructionMemory,
             resourceContext: nextContext.memory.resourceContext,
+            materialSummary: nextContext.memory.materialSummary,
             userConstraints: nextContext.memory.userConstraints,
             revisionIntent: nextContext.memory.revisionIntent,
             updatedAt: now()
@@ -820,6 +950,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
         );
         await appendEventWithClient(client, runId, "clarification.submitted", {
           answers: input.answers,
+          resourceIds: input.resourceIds,
           messageId: answerMessageId,
           contextVersion: nextContextVersion
         });

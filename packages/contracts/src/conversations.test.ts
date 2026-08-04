@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   agentProgressPayloadSchema,
   createConversationTurnRequestSchema,
-  runEventTypeSchema
+  runEventTypeSchema,
+  submitRunClarificationRequestSchema
 } from "./conversations";
 
 describe("conversation lifecycle contracts", () => {
@@ -41,6 +42,18 @@ describe("conversation lifecycle contracts", () => {
         content: "   "
       })
     ).toThrow();
+  });
+
+  it("accepts clarification answers with newly uploaded resources", () => {
+    const result = submitRunClarificationRequestSchema.parse({
+      idempotencyKey: "clarification-001",
+      uploadSessionId: "upload-session-001",
+      resourceIds: ["image-001"],
+      answers: [{ questionId: "audience", value: "家长" }]
+    });
+
+    expect(result.resourceIds).toEqual(["image-001"]);
+    expect(result.uploadSessionId).toBe("upload-session-001");
   });
 
   it("validates agent progress and heartbeat event contracts", () => {

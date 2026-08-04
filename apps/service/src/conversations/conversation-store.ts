@@ -486,9 +486,9 @@ export function createConversationStore(options: ConversationStoreOptions = {}) 
       }
     },
 
-    async submitClarification(runId: string, input: SubmitRunClarificationRequest): Promise<CreationRun> {
+    async submitClarification(ownerId: string, runId: string, input: SubmitRunClarificationRequest): Promise<CreationRun> {
       if (!options.persistence) throw new Error("RUN_CLARIFICATION_UNSUPPORTED");
-      const run = await options.persistence.submitClarification(runId, input);
+      const run = await options.persistence.submitClarification(ownerId, runId, input);
       runs.set(run.id, run);
       await options.dispatchPending?.();
       return run;

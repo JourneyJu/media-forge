@@ -792,7 +792,7 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
   if (request.method === "POST" && runClarificationMatch) {
     try {
       const input = submitRunClarificationRequestSchema.parse(await readJson(request));
-      sendJson(response, 200, await conversationStore.submitClarification(runClarificationMatch[1]!, input));
+      sendJson(response, 200, await conversationStore.submitClarification(ownerId, runClarificationMatch[1]!, input));
     } catch (error) {
       if (error instanceof ZodError || error instanceof SyntaxError) {
         sendJson(response, 400, { code: "VALIDATION_ERROR", message: "追问信息参数不合法" });

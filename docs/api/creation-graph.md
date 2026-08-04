@@ -146,6 +146,8 @@ data: {"runId":"run_1","stepId":"task_1","agentName":"MaterialAgent","sequence":
 - Worker 使用 LangGraph resume 继续执行。
 - 重复提交同一 `idempotencyKey` 返回同一结果。
 
+补充规则：追问提交可携带 `uploadSessionId` 和 `resourceIds`。服务端必须把这些 staged 资源绑定到同一 Conversation 和追问消息，并合并进恢复后的 `RunContext.resourceContext`。
+
 ## `GET /runs/:runId/tasks`
 
 读取多 Agent 节点任务状态。主要用于后台、调试和运营，不作为普通用户主界面 API。

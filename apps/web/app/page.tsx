@@ -1368,16 +1368,27 @@ export default function HomePage() {
       .map((question) => answers[question.id]?.trim())
       .filter(Boolean)
       .join("；");
+    if (hasActiveUploads) {
+      setStatus("图片上传完成后再提交补充信息");
+      return;
+    }
+    const resourceIds = assets.map((asset) => asset.id);
     try {
       await submitRunClarification(message.runId, {
         idempotencyKey: crypto.randomUUID(),
+        ...(uploadSessionId ? { uploadSessionId } : {}),
+        resourceIds,
         answers: Object.entries(answers)
           .filter(([, value]) => value.trim())
           .map(([questionId, value]) => ({ questionId, value: value.trim() }))
       });
       if (answerText) {
-        dispatch({ type: "user_message_added", message: createLocalUserMessage(answerText, []) });
+        dispatch({ type: "user_message_added", message: createLocalUserMessage(answerText, resourceIds) });
       }
+      setAssets([]);
+      uploadDrafts.forEach((upload) => URL.revokeObjectURL(upload.previewUrl));
+      setUploadDrafts([]);
+      setUploadSessionId(null);
       dispatch({ type: "clarification_submitted", runId: message.runId });
       setStatus("已补充信息，正在继续创作");
     } catch (error) {

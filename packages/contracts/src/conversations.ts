@@ -120,6 +120,8 @@ export const createConversationRunRequestSchema = z.object({
 
 export const submitRunClarificationRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(100),
+  uploadSessionId: z.string().trim().min(1).optional(),
+  resourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   answers: z.array(z.object({
     questionId: z.string().trim().min(1).max(80),
     value: z.string().trim().min(1).max(1000)

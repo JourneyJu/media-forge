@@ -33,3 +33,4 @@
 | CONV-029 | 失败后重新生成继承主题 | 首轮长 prompt 创建 Run 但最终失败，随后同一 Conversation 只发送“重新生成” | IntentResolver 判定 `sameTopic=true` 且 `mode=continue` 或 `revise`；新 Run 的 `context_json.intentResolution.inheritedMessageIds` 包含首轮用户消息，Brief 不把“重新生成”当主题。 |
 | CONV-030 | 明确切换新主题 | 同一 Conversation 中发送“新主题：写一篇暑期招生公众号文章” | IntentResolver 判定 `sameTopic=false` 且 `mode=new`；RunContext 清空旧主题 brief/outline/draft summary，不继承旧主题文本。 |
 | CONV-031 | 无历史短指令需追问 | 新 Conversation 首条消息只有“重新生成”或“继续” | IntentResolver 判定 `mode=clarify` 或进入 clarification；系统不生成“未指定主题”的泛化文章。 |
+| CONV-032 | 追问补充时添加图片 | Run 进入 `waiting_clarification` 后，用户上传图片并提交追问答案 | 图片从 staged 变为 attached，追问消息带 `resourceIds`，恢复后的 `graph_runs.context_json.resourceContext.currentResourceIds` 和 `materialSummary` 包含新增图片。 |
