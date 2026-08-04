@@ -42,6 +42,20 @@ describe("context rebuild fallback", () => {
     expect(memory.rebuiltContext?.styleConstraints).toContain("风格热烈但不要夸张，重点写孩子成长和老师陪伴。");
   });
 
+  it("does not let regenerate replace the previous valuable request", () => {
+    const memory = rebuildInstructionMemory([
+      {
+        id: "m1",
+        content: "金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请生成公众号文章，风格自然去 AI 味。"
+      },
+      { id: "m2", content: "重新生成" }
+    ], "continue");
+
+    expect(memory.recentValuableTurns.map((turn) => turn.messageId)).toEqual(["m1"]);
+    expect(memory.rebuiltContext?.sourceRequest).toContain("蚊子哪里跑");
+    expect(memory.rebuiltContext?.sourceRequest).not.toBe("重新生成");
+  });
+
   it("does not inherit historical resources for a new creation", () => {
     const context = buildResourceContext({
       currentResourceIds: ["new_image"],

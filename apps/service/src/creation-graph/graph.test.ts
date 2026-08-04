@@ -145,6 +145,62 @@ describe("wechat article creation graph", () => {
     expect(result.finalDocument?.attrs.title).not.toContain("继续任务");
   });
 
+  it("uses inherited topic when intent resolution treats regenerate as same-topic continuation", async () => {
+    const result = await runWechatArticleGraph({
+      ...baseState("金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请生成公众号文章。\n\n本轮指令：重新生成"),
+      intentResolution: {
+        mode: "continue",
+        sameTopic: true,
+        confidence: "high",
+        effectiveInstruction: "金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请生成公众号文章。\n\n本轮指令：重新生成",
+        inheritedMessageIds: ["message_1"],
+        reason: "同一会话内短指令默认继承历史主题"
+      },
+      memory: {
+        instructionMemory: {
+          recentValuableTurns: [{
+            messageId: "message_1",
+            content: "金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请生成公众号文章。",
+            reason: "包含原始创作主题"
+          }]
+        },
+        resourceContext: {
+          currentResourceIds: [],
+          inheritedResourceIds: [],
+          artifactResourceIds: [],
+          materialSummary: []
+        },
+        materialSummary: [],
+        userConstraints: []
+      }
+    }, {
+      agents: createDemoCreationAgents()
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.brief?.subject).toContain("蚊子哪里跑");
+    expect(result.finalDocument?.attrs.title).not.toBe("重新生成");
+  });
+
+  it("asks clarification when intent resolution cannot find an inherited topic", async () => {
+    const result = await runWechatArticleGraph({
+      ...baseState("继续"),
+      intentResolution: {
+        mode: "clarify",
+        sameTopic: true,
+        confidence: "low",
+        effectiveInstruction: "继续",
+        inheritedMessageIds: [],
+        reason: "短指令没有可继承的历史创作需求"
+      }
+    }, {
+      agents: createDemoCreationAgents()
+    });
+
+    expect(result.status).toBe("waiting_clarification");
+    expect(result.finalDocument).toBeUndefined();
+  });
+
   it("does not ask clarification for short revision requests with session memory", async () => {
     const result = await runWechatArticleGraph({
       ...baseState("标题更吸引人一点"),

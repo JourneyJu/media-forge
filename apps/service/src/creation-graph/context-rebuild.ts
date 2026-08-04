@@ -9,6 +9,7 @@ import {
   conversationInstructionMemorySchema,
   conversationResourceContextSchema
 } from "@mediaforge/contracts";
+import { isValuableUserInstruction } from "./intent-resolution";
 
 export interface RebuildUserMessage {
   id: string;
@@ -64,7 +65,7 @@ export function rebuildInstructionMemory(
       ...message,
       content: message.content.trim()
     }))
-    .filter((message) => isValuableInstruction(message.content));
+    .filter((message) => isValuableUserInstruction(message.content));
   const recentValuableTurns = valuableMessages.slice(-2).map((message) => ({
     messageId: message.id,
     content: clip(message.content, 4000),

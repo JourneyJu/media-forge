@@ -27,6 +27,7 @@ import {
   rebuildInstructionMemory,
   type RebuildUserMessage
 } from "./context-rebuild";
+import { resolveConversationIntent } from "./intent-resolution";
 
 interface RunRow {
   id: string;
@@ -191,16 +192,6 @@ function inferRevisionTarget(input: string): NonNullable<ConversationWorkingMemo
   return "all";
 }
 
-function isNewCreationIntent(input: string): boolean {
-  return /重新生成一篇|新主题|换一个主题|另写一篇|从头写/u.test(input);
-}
-
-function isRevisionIntent(input: string, memory: ConversationWorkingMemory): boolean {
-  if (!memory.lastArtifactId) return false;
-  if (isNewCreationIntent(input)) return false;
-  return /改|调整|换|优化|加|删|重写|更|补充|第三段|标题|语气|风格/u.test(input) || input.trim().length <= 40;
-}
-
 function createRunContext(
   conversationId: string,
   contextVersion: number,
@@ -210,13 +201,16 @@ function createRunContext(
   artifactResourceIds: string[]
 ): CreationRunContext {
   const currentInstruction = input.currentInstruction ?? input.userInput;
-  const creationMode = input.creationMode ?? (
-    isNewCreationIntent(currentInstruction) || !memory.lastArtifactId
-      ? "new"
-      : isRevisionIntent(currentInstruction, memory)
-        ? "revise"
-        : "continue"
-  );
+  const intentResolution = resolveConversationIntent({
+    requestedCreationMode: input.creationMode ?? "auto",
+    currentInstruction,
+    currentResourceIds: input.currentResourceIds ?? input.resourceIds,
+    memory,
+    userMessages
+  });
+  const creationMode: CreationRunContext["creationMode"] = intentResolution.mode === "clarify"
+    ? "continue"
+    : intentResolution.mode;
   const revisionIntent = creationMode === "revise"
     ? {
         target: inferRevisionTarget(currentInstruction),
@@ -247,6 +241,7 @@ function createRunContext(
   return creationRunContextSchema.parse({
     ...input,
     currentInstruction,
+    intentResolution,
     creationMode,
     currentResourceIds,
     inheritedResourceIds,

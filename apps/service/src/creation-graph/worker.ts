@@ -229,6 +229,7 @@ function createAgentProgressReporter(
 function createInitialState(job: CreationRunJob, context: {
   userInput: string;
   currentInstruction?: string;
+  intentResolution?: CreationGraphState["intentResolution"];
   resourceIds: string[];
   skillId: string;
   selectedSkills?: CreationGraphState["selectedSkills"];
@@ -238,7 +239,8 @@ function createInitialState(job: CreationRunJob, context: {
     workspaceId: job.workspaceId,
     conversationId: job.conversationId,
     runId: job.runId,
-    userInput: context.currentInstruction ?? context.userInput,
+    userInput: context.intentResolution?.effectiveInstruction ?? context.currentInstruction ?? context.userInput,
+    intentResolution: context.intentResolution,
     resourceIds: context.resourceIds,
     skillId: context.skillId,
     selectedSkills: context.selectedSkills ?? [],

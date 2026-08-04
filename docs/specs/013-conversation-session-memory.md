@@ -36,6 +36,7 @@
 6. 每个 Agent 只接收与自身任务相关的上下文片段。
 7. 面向模型的上下文与前端展示分离：前端展示完整消息历史，模型只接收结构化上下文、最近少量高价值原文和本轮指令。
 8. 资源上下文只保存 `resourceId`、绑定关系、元数据和派生摘要；需要识别图片时必须按 `resourceId` 读取原始资源或预览资源。
+9. 同一 `Conversation` 默认延续同一创作主题；是否切换主题由 IntentResolver 结合当前 Turn 和历史任务状态判断，规则只作为模型不可用时的兜底。
 
 ## 上下文分层
 
@@ -49,6 +50,9 @@ Working Memory
 Context Rebuild
   基于 Raw Layer 和已有 Working Memory 重建下一轮创作所需的结构化任务状态。
 
+Intent Resolution
+  在创建 Run 前判断本轮是否延续同主题、修改已有内容、开启新主题或需要追问。
+
 Run Context
   本次 Run 的冻结执行快照，保存在 graph_runs.context_json。
 
@@ -61,7 +65,9 @@ Prompt Context
 ```mermaid
 flowchart TD
   User["用户输入或上传素材"] --> Raw["Raw Layer: messages / resources / artifacts"]
+  Raw --> Intent["IntentResolver"]
   Raw --> Rebuild["Context Rebuild Agent"]
+  Intent --> Rebuild
   Rebuild --> Memory["ConversationWorkingMemory"]
   Memory --> RunContext["CreationRunContext: frozen snapshot"]
   RunContext --> Worker["Worker"]
@@ -230,6 +236,7 @@ Working Memory 的更新来源：
 ```ts
 interface CreationRunContext {
   currentInstruction: string;
+  intentResolution: IntentResolution;
   instructionMemory: ConversationInstructionMemory;
   resourceContext: ConversationResourceContext;
   skillId: string;
@@ -251,6 +258,7 @@ interface CreationRunContext {
 
 - 同一个 Run 只读取自己的 `context_json`。
 - 用户在 Run 执行期间继续发送消息，不改变已经创建的 Run。
+- `intentResolution` 必须记录本次 Run 创建时的同主题/新主题判断、有效指令和继承消息 ID，便于审计和复现。
 - 追问补充会递增 `contextVersion`，更新 `context_json` 后重新入队。
 - 如果是修改类请求，Run Context 应包含 `lastArtifactId`，必要时 Worker 可按该 ID 读取上一版 `ArticleDocument`。
 - `currentInstruction`、`instructionMemory` 和 `resourceContext` 必须分开传递，禁止把历史用户消息直接拼接成一条长 prompt。
@@ -263,7 +271,7 @@ interface CreationRunContext {
 | Agent | 主要上下文 |
 | --- | --- |
 | Context Rebuild Agent | 当前 Conversation 内用户消息、资源索引、素材摘要、Artifact 摘要、本轮指令 |
-| Brief Agent | currentInstruction、instructionMemory、历史 brief 摘要、用户约束、resourceContext.materialSummary |
+| Brief Agent | intentResolution、currentInstruction、instructionMemory、历史 brief 摘要、用户约束、resourceContext.materialSummary |
 | Title Agent | brief、用户约束、上一版标题或修改意图 |
 | Outline Agent | brief、selectedTitle、上一版 outline 或结构修改意图 |
 | Writer Agent | brief、selectedTitle、outline、修改任务中的上一版 ArticleDocument |
@@ -283,22 +291,50 @@ type TurnIntent =
   | "clarification_answer";
 ```
 
-第一阶段可使用规则判断：
+`creationMode=auto` 时，服务端必须先执行轻量 IntentResolver。IntentResolver 可以由模型实现，并使用规则兜底；它的职责不是生成文章内容，而是判断本轮 Turn 与同一 `Conversation` 中历史创作任务的关系。
 
-- 包含“改、调整、换、优化、加、删、重写标题”等动词时，优先判定为 `revise_existing`。
-- 当前会话已有 `lastArtifactId` 且用户输入较短时，优先判定为 `revise_existing` 或 `continue_existing`。
-- 明确出现“重新生成一篇、新主题、换一个主题”时，判定为 `new_creation`。
-- Run 处于 `waiting_clarification` 且提交追问答案时，判定为 `clarification_answer`。
+IntentResolver 输入：
+
+- 当前 `currentInstruction`。
+- 当前 Conversation 内最近 1 到 2 条有价值用户原文。
+- `instructionMemory.rebuiltContext`，尤其是 `taskGoal`、`sourceRequest`、`audience` 和约束。
+- 最近 Run 状态和错误摘要；上一轮失败也可以作为可继承的历史任务。
+- 是否存在 `lastArtifactId`；该字段只表示能否修改已有成品，不决定是否保留主题。
+- 当前资源、用户显式继承资源和最新 Artifact 使用资源。
+
+IntentResolver 输出必须是结构化 JSON：
+
+```ts
+interface IntentResolution {
+  mode: "new" | "revise" | "continue" | "clarify";
+  sameTopic: boolean;
+  confidence: "high" | "medium" | "low";
+  effectiveInstruction: string;
+  inheritedMessageIds: string[];
+  reason: string;
+}
+```
+
+判定原则：
+
+- 同一 `Conversation` 默认 `sameTopic=true`，除非用户明确要求换主题，或模型高置信判断当前输入是独立新需求。
+- “重新生成”“继续”“再来一次”“重试”“接着写”“换个标题”“改得自然点”等短指令是操作意图，不是文章主题；如果历史中存在可继承任务，必须继承历史主题和约束。
+- 没有 `lastArtifactId` 不代表不能继承主题。上一轮 Run 失败时，仍然应继承失败 Run 对应的原始需求和资源上下文。
+- `lastArtifactId` 只用于判断是否能读取上一版 `ArticleDocument` 做定向修改；不能作为是否保留历史主题的前置条件。
+- 当前输入包含完整新主体、新目标或新资源，且模型判断与历史主题不同，或用户明确说“新主题”“换一个主题”“不要上面的了”，才进入 `new_creation`。
+- 当前输入很短且会话中没有可继承任务，或 IntentResolver 置信度低且无法确定主题时，进入 `clarification_answer` / `clarify` 分支，不得生成“未指定主题”的泛化文章。
 
 质量重构后的约束：
 
-- 意图识别只读取最新 Turn，不读取拼接后的多条历史用户消息。
+- 意图识别不得把多条历史消息直接拼接成当前 prompt；只能读取结构化 rebuild、最近高价值原文和必要元数据。
 - 前端可发送 `creationMode=auto|new|revise|continue`；显式值优先于服务端推断。
+- IntentResolver 调用失败时，规则兜底必须偏向保留同会话历史主题；只有当前输入明确表达新主题时才判定为 `new_creation`。
 - `new_creation` 清空旧 brief、标题、outline、draft summary、LayoutPlan 和 `lastArtifactId`。
 - `new_creation` 默认只使用本轮资源；历史资源必须由用户显式选择后继承。
 - `revise_existing` 才允许读取上一版 ArticleDocument 和与修改目标相关的历史状态。
 - `continue_existing` 使用 `instructionMemory.rebuiltContext` 和最近高价值原文恢复创作目标，同时保留本轮短指令。
 - `revise_existing` 可以继承上一版 Artifact 使用的资源，但不能自动继承会话内全部历史资源。
+- Brief Agent 必须使用 `effectiveInstruction` 和 `inheritedMessageIds` 对应的历史需求提取 `subject`、`audience` 和 `contentType`；不得在有历史可继承任务时输出“未指定主题”“待定”“通用内容”后继续生成。
 
 完整目标契约见 `docs/specs/015-multi-agent-content-and-layout-quality.md`。
 
@@ -365,6 +401,7 @@ sequenceDiagram
 目标方案采用分层裁剪策略：
 
 - 最新用户输入以 `currentInstruction` 完整保留。
+- 同主题/新主题判断以 `intentResolution` 结构化保存；IntentResolver 可读取 rebuild 摘要和最近高价值原文，但不得把完整历史拼接进后续 Agent prompt。
 - 旧文本需求由 Context Rebuild Agent 重建为结构化 `instructionMemory.rebuiltContext`。
 - 最近 1 到 2 条有价值用户原文保留在 `instructionMemory.recentValuableTurns`。
 - 修改任务按 `lastArtifactId` 读取上一版结构化正文。
@@ -390,11 +427,12 @@ sequenceDiagram
 
 1. 增加 `ConversationInstructionMemory`、`ConversationResourceContext` 和 `CreationRunContext` 契约。
 2. 在现有 `conversation_memories.memory_json` 中保存结构化上下文，第一阶段不新增表。
-3. 创建 Run 时运行 Context Rebuild；模型失败时使用规则 fallback。
-4. 创建 Run 时冻结 `currentInstruction`、`instructionMemory`、`resourceContext`、`lastArtifactId` 到 `graph_runs.context_json`。
-5. Agent 按职责读取上下文片段，Brief / Planner 不再只依赖最新短指令。
-6. Run 完成后用 AgentOutput、Artifact 和资源使用结果更新 Working Memory。
-7. Clarification 提交后更新 `contextVersion`、`context_json` 和 Working Memory。
+3. 创建 Run 时先运行 IntentResolver；模型失败时使用偏向同主题继承的规则 fallback。
+4. 根据 `intentResolution` 运行 Context Rebuild；Context Rebuild 模型失败时使用规则摘要 fallback。
+5. 创建 Run 时冻结 `currentInstruction`、`intentResolution`、`instructionMemory`、`resourceContext`、`lastArtifactId` 到 `graph_runs.context_json`。
+6. Agent 按职责读取上下文片段，Brief / Planner 不再只依赖最新短指令。
+7. Run 完成后用 AgentOutput、Artifact 和资源使用结果更新 Working Memory。
+8. Clarification 提交后更新 `contextVersion`、`context_json` 和 Working Memory。
 
 ## 后续阶段
 
@@ -411,6 +449,9 @@ sequenceDiagram
 - 用户说“标题更吸引人一点”时，系统基于上一版文章修改，不重新空写。
 - 用户要求修改指定章节时，系统能读取上一版结构化正文并定向修改。
 - 用户首轮输入长 prompt，后续只说“继续任务”时，RunContext 仍保留原始创作目标、约束和最近有价值原文。
+- 同一 Conversation 中上一轮 Run 即使失败，用户只说“重新生成”时，IntentResolver 仍默认判定为同主题继续，并继承上一轮原始创作需求；不得把“重新生成”当作文章主题。
+- 用户明确说“新主题”“换一个主题”“不要上面的了”并给出新需求时，IntentResolver 判定为 `new_creation`，不得继承旧主题。
+- 同一 Conversation 内短指令且无任何可继承创作需求时，进入澄清，不生成“未指定主题”的泛化文章。
 - 图片、二维码、海报等资源原件仍从 Resource / 对象存储读取；`materialSummary` 缺失或错误时可重新按 `resourceId` 识别。
 - 新主题不会自动继承旧资源；继续或修改任务只能继承显式选择资源或上一版 Artifact 已使用资源。
 - 刷新页面后继续会话，Working Memory 不丢失。

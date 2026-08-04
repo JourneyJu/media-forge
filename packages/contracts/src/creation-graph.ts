@@ -337,6 +337,17 @@ export type ConversationInstructionMemory = z.infer<typeof conversationInstructi
 export type ConversationResourceContext = z.infer<typeof conversationResourceContextSchema>;
 export type ConversationWorkingMemory = z.infer<typeof conversationWorkingMemorySchema>;
 
+export const intentResolutionSchema = z.object({
+  mode: z.enum(["new", "revise", "continue", "clarify"]),
+  sameTopic: z.boolean(),
+  confidence: z.enum(["high", "medium", "low"]),
+  effectiveInstruction: z.string().trim().min(1).max(8000),
+  inheritedMessageIds: z.array(z.string().trim().min(1)).max(20),
+  reason: z.string().trim().min(1).max(500)
+});
+
+export type IntentResolution = z.infer<typeof intentResolutionSchema>;
+
 export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pick({
   instructionMemory: true,
   resourceContext: true,
@@ -355,6 +366,7 @@ export const creationRunContextSchema = z.object({
   userInput: z.string().trim().min(1),
   resourceIds: z.array(z.string().trim().min(1)).max(100),
   currentInstruction: z.string().trim().min(1).optional(),
+  intentResolution: intentResolutionSchema.optional(),
   creationMode: creationModeSchema.exclude(["auto"]).default("new"),
   currentResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
@@ -385,6 +397,7 @@ export interface CreationGraphState {
   conversationId: string;
   runId: string;
   userInput: string;
+  intentResolution?: IntentResolution;
   resourceIds: string[];
   skillId: string;
   selectedSkills: CreationRunContext["selectedSkills"];

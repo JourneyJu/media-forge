@@ -100,7 +100,7 @@ POST /conversations/:id/turns
 → 创建 Run 和 outbox
 ```
 
-后续发送不得把历史用户消息拼接成当前 Run 的原始指令。RunContext 必须区分最新 `currentInstruction`、本轮 `currentResourceIds` 和用户显式选择的 `inheritedResourceIds`。服务端根据 `creationMode` 区分重新创作、局部修改和继续扩写；重新创作必须清空旧 brief、标题、提纲、正文摘要、LayoutPlan 和 `lastArtifactId`。
+后续发送不得把历史用户消息拼接成当前 Run 的原始指令。RunContext 必须区分最新 `currentInstruction`、IntentResolver 输出的 `intentResolution`、本轮 `currentResourceIds` 和用户显式选择的 `inheritedResourceIds`。同一 Conversation 默认延续同一创作主题；服务端根据用户显式 `creationMode` 或 IntentResolver 的结构化判断区分重新创作、局部修改、继续扩写和追问。重新创作必须清空旧 brief、标题、提纲、正文摘要、LayoutPlan 和 `lastArtifactId`。
 
 ### 历史恢复
 
@@ -142,13 +142,13 @@ DELETE /conversations/:id
 
 会话工作记忆包含当前 brief、标题、提纲摘要、素材摘要、用户约束、修改意图和最新 `Artifact` 引用。原始消息、资源绑定和 Artifact 仍然是 PostgreSQL 中的事实源，Working Memory 只是面向后续 Run 的可更新摘要。
 
-面向模型的历史上下文与前端展示分离。前端恢复 Conversation 时仍展示完整消息历史；创建 Run 时通过 Context Rebuild Agent 生成 `instructionMemory`：较早的有价值用户输入重建为结构化任务状态，最近 1 到 2 条有价值用户输入以原文保存。最新 Turn 仍作为 `currentInstruction` 表达本轮意图；“继续任务”“往下写”等短指令不占用最近高价值原文名额。`creationMode=new` 必须清空旧主题上下文，只保留当前新主题重建出的 `instructionMemory`。
+面向模型的历史上下文与前端展示分离。前端恢复 Conversation 时仍展示完整消息历史；创建 Run 时先由 IntentResolver 判断本轮是否仍是同一主题，再通过 Context Rebuild Agent 生成 `instructionMemory`：较早的有价值用户输入重建为结构化任务状态，最近 1 到 2 条有价值用户输入以原文保存。最新 Turn 仍作为 `currentInstruction` 表达本轮意图；“继续任务”“重新生成”“再来一次”“往下写”等短指令是操作意图，不占用最近高价值原文名额，也不能被当成文章主题。`creationMode=new` 必须清空旧主题上下文，只保留当前新主题重建出的 `instructionMemory`。
 
 资源上下文不做文本式压缩。图片、文件、二维码、海报等原始资源继续以 `Resource` 和对象存储为事实源；RunContext 只冻结 `resourceContext`，包含 `currentResourceIds`、用户显式继承的 `inheritedResourceIds`、上一版 Artifact 使用的 `artifactResourceIds` 以及 `materialSummary` 派生摘要。Context Rebuild Agent 只能引用已有 `resourceId`，不能伪造资源、跨 Conversation 继承资源，也不能把 OCR 或视觉摘要当作原始资源替代。
 
-后续用户 Turn 创建 Run 时，`conversations` 模块负责读取 Working Memory、识别 Turn 意图、组装本次 `CreationRunContext`，并保证已经创建的 Run 不受后续消息影响。Conversation 删除时，关联 Working Memory 必须随 Conversation 聚合一起清理。
+后续用户 Turn 创建 Run 时，`conversations` 模块负责读取 Working Memory、调用或降级执行 IntentResolver、组装本次 `CreationRunContext`，并保证已经创建的 Run 不受后续消息影响。上一轮 Run 失败但同一 Conversation 仍有历史有效需求时，短指令默认继承历史主题；`lastArtifactId` 只表示能否读取上一版成品做定向修改，不能作为是否保留主题的唯一依据。Conversation 删除时，关联 Working Memory 必须随 Conversation 聚合一起清理。
 
-用户可以使用 `creationMode=auto|new|revise|continue` 表达意图。用户显式选择优先于服务端推断；`auto` 只分析最新 Turn，不读取拼接后的历史文本。新创作默认只使用本轮资源，旧资源只有在用户明确继承时才能进入新 Run。
+用户可以使用 `creationMode=auto|new|revise|continue` 表达意图。用户显式选择优先于服务端推断；`auto` 使用 IntentResolver 读取当前 Turn、rebuild 摘要、最近高价值原文和必要元数据，不读取拼接后的历史文本。新创作默认只使用本轮资源，旧资源只有在用户明确继承或修改上一版 Artifact 时才能进入新 Run。
 
 ## 风险
 

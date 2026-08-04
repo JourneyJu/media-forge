@@ -30,3 +30,6 @@
 | CONV-026 | 资源不被文本压缩替代 | 首轮上传图片并生成文章，后续继续任务 | 新 Run 的 `resourceContext` 保留已有 `resourceId`、元数据和素材摘要；原始资源仍可按 `resourceId` 读取。 |
 | CONV-027 | 新主题不继承旧资源 | 同一 Conversation 内发送新主题且未选择历史资源 | 新 Run 的 `resourceContext.currentResourceIds` 只包含本轮资源，不自动带入旧资源。 |
 | CONV-028 | 修改任务继承产物资源 | 用户修改上一版文章标题或语气 | 新 Run 可通过 `lastArtifactId` 找回上一版 Artifact 使用的 `artifactResourceIds`，但不继承未使用历史资源。 |
+| CONV-029 | 失败后重新生成继承主题 | 首轮长 prompt 创建 Run 但最终失败，随后同一 Conversation 只发送“重新生成” | IntentResolver 判定 `sameTopic=true` 且 `mode=continue` 或 `revise`；新 Run 的 `context_json.intentResolution.inheritedMessageIds` 包含首轮用户消息，Brief 不把“重新生成”当主题。 |
+| CONV-030 | 明确切换新主题 | 同一 Conversation 中发送“新主题：写一篇暑期招生公众号文章” | IntentResolver 判定 `sameTopic=false` 且 `mode=new`；RunContext 清空旧主题 brief/outline/draft summary，不继承旧主题文本。 |
+| CONV-031 | 无历史短指令需追问 | 新 Conversation 首条消息只有“重新生成”或“继续” | IntentResolver 判定 `mode=clarify` 或进入 clarification；系统不生成“未指定主题”的泛化文章。 |

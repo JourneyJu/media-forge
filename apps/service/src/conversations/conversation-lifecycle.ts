@@ -30,6 +30,9 @@ import {
   rebuildInstructionMemory,
   type RebuildUserMessage
 } from "../creation-graph/context-rebuild";
+import {
+  resolveConversationIntent
+} from "../creation-graph/intent-resolution";
 
 interface ConversationRow {
   id: string;
@@ -206,10 +209,6 @@ function normalizeMemory(
   });
 }
 
-function isNewCreationIntent(input: string): boolean {
-  return /重新生成一篇|新主题|换一个主题|另写一篇|从头写/u.test(input);
-}
-
 function revisionTarget(input: string): NonNullable<ConversationWorkingMemory["revisionIntent"]>["target"] {
   if (/标题|题目/u.test(input)) return "title";
   if (/结构|提纲|章节|段落顺序/u.test(input)) return "outline";
@@ -217,24 +216,6 @@ function revisionTarget(input: string): NonNullable<ConversationWorkingMemory["r
   if (/语气|风格|口吻|温暖|正式|自然/u.test(input)) return "style";
   if (/第三段|正文|内容|加上|删掉|补充/u.test(input)) return "body";
   return "all";
-}
-
-function isRevisionIntent(input: string, memory: ConversationWorkingMemory): boolean {
-  if (!memory.lastArtifactId || isNewCreationIntent(input)) return false;
-  return /改|调整|换|优化|加|删|重写|更|补充|第三段|标题|语气|风格/u.test(input) || input.trim().length <= 40;
-}
-
-function resolveCreationMode(
-  requested: CreateConversationTurnRequest["creationMode"],
-  input: string,
-  memory: ConversationWorkingMemory,
-  currentResourceIds: string[]
-): CreationRunContext["creationMode"] {
-  if (requested !== "auto") return requested;
-  if (!memory.lastArtifactId || isNewCreationIntent(input)) return "new";
-  if (isRevisionIntent(input, memory)) return "revise";
-  if (input.trim().length >= 80 && currentResourceIds.length > 0) return "new";
-  return "continue";
 }
 
 function createRunContext(
@@ -255,12 +236,16 @@ function createRunContext(
   },
   memory: ConversationWorkingMemory
 ): CreationRunContext {
-  const creationMode = resolveCreationMode(
-    input.requestedCreationMode,
-    input.userInput,
+  const intentResolution = resolveConversationIntent({
+    requestedCreationMode: input.requestedCreationMode,
+    currentInstruction: input.userInput,
+    currentResourceIds: input.currentResourceIds,
     memory,
-    input.currentResourceIds
-  );
+    userMessages: input.userMessages
+  });
+  const creationMode: CreationRunContext["creationMode"] = intentResolution.mode === "clarify"
+    ? "continue"
+    : intentResolution.mode;
   const revisionIntent = creationMode === "revise"
     ? {
         target: revisionTarget(input.userInput),
@@ -291,6 +276,7 @@ function createRunContext(
     userInput: input.userInput,
     resourceIds: input.resourceIds,
     currentInstruction: input.userInput,
+    intentResolution,
     creationMode,
     currentResourceIds: input.currentResourceIds,
     inheritedResourceIds: input.inheritedResourceIds,

@@ -39,6 +39,7 @@ const GraphAnnotation = Annotation.Root({
   conversationId: Annotation<string>(),
   runId: Annotation<string>(),
   userInput: Annotation<string>(),
+  intentResolution: Annotation<CreationGraphState["intentResolution"] | undefined>(),
   resourceIds: Annotation<string[]>({
     reducer: (_current, update) => update,
     default: () => []
@@ -77,6 +78,7 @@ const GraphAnnotation = Annotation.Root({
 });
 
 function requiresClarification(state: CreationGraphState): boolean {
+  if (state.intentResolution?.mode === "clarify") return true;
   if (state.memory?.lastArtifactId) return false;
   if (state.memory?.instructionMemory?.rebuiltContext) return false;
   if ((state.memory?.instructionMemory?.recentValuableTurns ?? []).length > 0) return false;

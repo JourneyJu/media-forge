@@ -4,6 +4,7 @@ import {
   creationRunContextSchema,
   conversationWorkingMemorySchema,
   creativeBriefSchema,
+  intentResolutionSchema,
   titleCandidatesSchema
 } from "./creation-graph";
 
@@ -74,6 +75,22 @@ describe("creation graph contracts", () => {
     expect(context.memory.resourceContext.materialSummary).toEqual([]);
     expect(context.creationMode).toBe("new");
     expect(context.currentResourceIds).toEqual([]);
+    expect(context.intentResolution).toBeUndefined();
+  });
+
+  it("validates intent resolution for same-topic continuation", () => {
+    const intent = intentResolutionSchema.parse({
+      mode: "continue",
+      sameTopic: true,
+      confidence: "high",
+      effectiveInstruction: "围绕小兰花获奖公众号文章重新生成。本轮指令：重新生成",
+      inheritedMessageIds: ["message_1"],
+      reason: "同一会话内短指令默认继承上一轮创作主题"
+    });
+
+    expect(intent.mode).toBe("continue");
+    expect(intent.sameTopic).toBe(true);
+    expect(intent.inheritedMessageIds).toEqual(["message_1"]);
   });
 
   it("validates conversation scoped working memory", () => {

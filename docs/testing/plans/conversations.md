@@ -39,6 +39,10 @@
 - 第一轮生成完成后，Working Memory 写入 brief、标题、提纲摘要、正文摘要和 `lastArtifactId`。
 - 后续 RunContext 使用模型辅助 `instructionMemory = 结构化 rebuiltContext + 最近 1 到 2 条有价值用户输入原文`，前端消息历史保持完整展示。
 - 用户只发送“继续任务”等短指令时，RunContext 仍保留前序长 prompt 的有价值内容，不让短指令覆盖创作主题。
+- 同一 Conversation 默认同主题；上一轮 Run 失败且没有 `lastArtifactId` 时，用户只发送“重新生成”仍应继承上一轮原始需求。
+- IntentResolver 判断同主题/新主题结果必须冻结到 `graph_runs.context_json.intentResolution`，用于审计和复现。
+- 用户明确切换新主题时，IntentResolver 判定为 `new_creation`，清空旧主题上下文。
+- 当前短指令没有可继承历史需求且置信度低时，进入 clarification，不生成“未指定主题”的泛化文章。
 - 资源上下文使用 `resourceContext` 传递 `resourceId`、绑定关系、元数据和派生摘要，不用文本 rebuild 替代原始资源。
 - 新主题默认不继承历史资源；继续或修改任务只能继承用户显式选择资源或上一版 Artifact 已使用资源。
 - 素材摘要缺失或低质量时，Material / Vision Agent 可按 `resourceId` 重新读取原始资源或预览资源。
