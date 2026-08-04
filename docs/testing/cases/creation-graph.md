@@ -80,6 +80,17 @@
 步骤：Reviewer 返回一个 `error` 级问题。  
 期望：Graph 进入 Revision 并重新审校；最多两轮，超过上限后 failed 且不创建 Artifact。
 
+## CG-010D Revision 不得漂移标题
+
+前置：Title Agent 已生成候选集合并选中 `selectedId`，Reviewer 返回正文、图片、结构或版式问题。
+步骤：模拟 Revision Agent 输出的 `ArticleDraft.title` 与选中标题不一致。
+期望：Graph 在非标题问题修订中恢复或保持 Title Agent 选中的标题；Artifact Builder 通过 `TITLE_SOURCE_INVALID` 回归校验，不因标题漂移导致微信排版失败。
+
+## CG-010E 标题问题必须回退 Title Agent
+
+步骤：Reviewer 明确返回标题不匹配、标题不准确或标题传播力不足的问题。
+期望：Graph 回退到 Title Agent 重新生成候选并更新 `selectedId`，后续 Outline、ImagePlan、Writer、Layout 和 Review 使用新的选中标题；不得由 Revision Agent 直接改写最终标题。
+
 ## CG-011 SSE 断线续传
 
 步骤：收到 event_no=3 后断开，再请求 `/events?after=3`。  

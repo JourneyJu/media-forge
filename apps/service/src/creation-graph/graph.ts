@@ -89,6 +89,18 @@ function selectedTitle(titles: TitleCandidates): string {
   return titles.items.find((item) => item.id === titles.selectedId)?.title ?? titles.items[0]!.title;
 }
 
+function selectedTitleCandidate(titles: TitleCandidates) {
+  return titles.items.find((item) => item.id === titles.selectedId) ?? titles.items[0]!;
+}
+
+function withSelectedTitle(draft: ArticleDraft, titles: TitleCandidates): ArticleDraft {
+  const selected = selectedTitleCandidate(titles);
+  const { subtitle: _subtitle, ...rest } = draft;
+  return selected.subtitle !== undefined
+    ? { ...rest, title: selected.title, subtitle: selected.subtitle }
+    : { ...rest, title: selected.title };
+}
+
 function createObservedNode(
   observer: GraphExecutionObserver | undefined,
   nodeName: string,
@@ -150,13 +162,14 @@ function routeAfterClarification(state: CreationGraphState): "planner_node" | ty
 
 function routeAfterReview(
   state: CreationGraphState
-): "brief_node" | "planner_node" | "revision_node" | "image_plan_node" | "layout_node" | "artifact_node" | "fail_node" {
+): "brief_node" | "planner_node" | "title_node" | "revision_node" | "image_plan_node" | "layout_node" | "artifact_node" | "fail_node" {
   const report = state.reviewReports.at(-1);
   if (report?.passed) return "artifact_node";
   if (state.revisionCount >= state.maxRevisionCount) return "fail_node";
   const targets = new Set(report?.issues.filter((issue) => issue.severity === "error").map((issue) => issue.target));
   if (targets.has("brief")) return "brief_node";
   if (targets.has("plan") || targets.has("outline")) return "planner_node";
+  if (targets.has("title")) return "title_node";
   if (targets.has("image")) return "image_plan_node";
   if (targets.has("layout")) return "layout_node";
   return "revision_node";
@@ -343,8 +356,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     observer,
     "revision",
     "内容修订",
-    async (state) => ({
-      draft: await agents.reviseDraft({
+    async (state) => {
+      const draft = await agents.reviseDraft({
         brief: requireBrief(state),
         contentPlan: requireContentPlan(state),
         draft: requireDraft(state),
@@ -354,9 +367,12 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         report: state.reviewReports.at(-1)!,
         selectedSkills: state.selectedSkills,
         memory: state.memory
-      }),
-      revisionCount: state.revisionCount
-    }),
+      });
+      return {
+        draft: withSelectedTitle(draft, requireTitles(state)),
+        revisionCount: state.revisionCount
+      };
+    },
     () => "已按审校问题完成定向修订"
   );
 

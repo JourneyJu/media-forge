@@ -109,6 +109,17 @@ apps/worker/
 | `render` | Trusted WeChat Renderer | 将受控 `LayoutPlan` 映射为微信兼容 HTML；它不是自由文本 Agent。 |
 | `artifact` | Artifact Builder | 校验并保存 Artifact 和 ArticleVersion。 |
 
+## 标题来源一致性
+
+Title Agent 是文章标题的唯一生产者。最终 `ArticleDraft.title` 必须等于 `TitleCandidates.selectedId` 指向的候选标题，Artifact Builder 必须在保存前执行该校验，失败时返回 `ARTIFACT_VALIDATION_FAILED:TITLE_SOURCE_INVALID`，不得生成可发布预览。
+
+Revision Agent 默认不得修改标题、副标题或标题候选集合。Reviewer 如果发现正文、图片、结构或版式问题，Graph 只允许对应节点或 Revision 修订相关内容，并在修订后继续沿用 Title Agent 选中的标题。Reviewer 如果明确发现标题问题，Graph 必须回退到 Title Agent 重新生成和选择标题，再继续后续 Outline、ImagePlan、Writer、Layout 和 Review；不得由 Revision Agent 绕过标题候选集合直接改写标题。
+
+该规则用于同时保证两个边界：
+
+- 用户原始 prompt 不得被当作标题。
+- 审校后的自然修订不得让最终标题脱离 Title Agent 的 `selectedId`。
+
 ## 会话记忆输入
 
 Creation Graph 不维护跨会话长期记忆。它只消费 `conversations` 模块在 Run 创建时冻结的 `CreationRunContext`，其中可包含当前会话的 Working Memory 摘要。
@@ -199,6 +210,7 @@ Artifact Builder 必须阻止以下内容进入最终公众号正文：
 - 未经 schema 校验的自然语言草稿。
 - 模型生成的任意 HTML、CSS、JavaScript 或事件属性。
 - 未通过 owner、version、asset type 和用途校验的 Skill 资源。
+- 未来源于 Title Agent `selectedId` 的最终标题。
 
 ## 与前端交互的关系
 
@@ -223,6 +235,7 @@ POST /runs/:id/clarifications
 - RunEvent 可恢复。
 - Worker 重试不会重复创建 Artifact。
 - 最终公众号正文不混入过程信息。
+- 最终标题始终来自 Title Agent `selectedId`；Revision 不得在非标题问题中改写标题。
 - 新主题不继承旧主题、旧素材或旧 LayoutPlan。
 - 生产模型不可用时明确失败，不返回 Demo 文章。
 - Reviewer 未通过时不创建 Artifact，并回退到对应问题节点。

@@ -19,6 +19,7 @@
 - Artifact 和 ArticleVersion 创建。
 - 最终内容防污染。
 - 标题候选生成、自动选择和标题来源校验。
+- Review / Revision 后的标题来源一致性校验。
 - 入队 Outbox、重复消费和 Artifact 幂等。
 - 生产环境 Demo 禁止和模型路由门禁。
 - 最新 Turn、CreationMode 和本轮/继承资源隔离。
@@ -74,6 +75,7 @@
 - Artifact 存在。
 - 手机预览内容不含过程信息。
 - 标题来自候选集合，不等于用户原始输入。
+- Review 或 Revision 之后标题仍来自 Title Agent `selectedId`；非标题问题不得改写标题。
 - Worker 读取的是当前 Conversation 上下文。
 - 修改类请求基于 `lastArtifactId` 和 Working Memory 处理，不从空白上下文重新生成。
 
@@ -158,6 +160,7 @@ Writer Agent 抛错
 - 队列不可用时 Run 卡在 queued。
 - 自动 Demo 回退掩盖模型配置错误。
 - 原始用户提示词被当作 `subject`、标题或正文。
+- Revision Agent 在正文、图片、结构或版式修订中改写标题，导致 `TITLE_SOURCE_INVALID`。
 - Working Memory 被当作最终正文事实源，覆盖 Artifact / ArticleDocument。
 - 历史用户消息拼接后覆盖最新 Turn 的主题。
 - 新创作自动携带会话内旧素材或旧 LayoutPlan。

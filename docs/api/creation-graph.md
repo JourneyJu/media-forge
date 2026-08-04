@@ -215,3 +215,6 @@ Material 节点会对本轮图片调用 `multimodal_generation` 路由，结构�
 | `GENERATION_MODEL_UNAVAILABLE` | 503 | 生产环境没有可用的 active 模型路由；不得回退 Demo。 |
 | `RUN_CONTEXT_INVALID` | 422 | 创作模式、当前资源或继承资源不满足目标上下文约束。 |
 | `LAYOUT_PLAN_INVALID` | 422 | LayoutPlan 不符合白名单 schema，禁止进入 Renderer。 |
+| `ARTIFACT_VALIDATION_FAILED` | 422 | Artifact Builder 发布前校验失败，错误摘要必须包含具体 violation code，例如 `TITLE_SOURCE_INVALID`。 |
+
+`TITLE_SOURCE_INVALID` 表示最终标题不是 Title Agent `selectedId` 指向的候选标题。该错误通常说明 Review 后的 Revision 改写了标题，或标题问题没有回退到 Title Agent 重新选择标题。Run 必须 failed，不得生成 `artifact.created` 或可发布预览。

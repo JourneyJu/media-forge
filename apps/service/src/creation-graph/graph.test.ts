@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { CreationGraphState } from "@mediaforge/contracts";
+import type { CreationAgents } from "./agents";
+import type { CreationGraphState, ReviewReport, TitleCandidates } from "@mediaforge/contracts";
 import { createDemoCreationAgents } from "./agents";
 import { runWechatArticleGraph } from "./graph";
 
@@ -16,6 +17,37 @@ function baseState(userInput: string): CreationGraphState {
     revisionCount: 0,
     maxRevisionCount: 2,
     status: "running"
+  };
+}
+
+function reviewReport(passed: boolean, issues: ReviewReport["issues"] = []): ReviewReport {
+  return {
+    passed,
+    scores: {
+      story: passed ? 90 : 60,
+      commercial: passed ? 90 : 60,
+      audienceFit: passed ? 90 : 60,
+      naturalness: passed ? 90 : 60,
+      wechatReadability: passed ? 90 : 60,
+      factualRisk: 90,
+      subjectAlignment: passed ? 90 : 60,
+      requirementCoverage: passed ? 90 : 60,
+      contentDepth: passed ? 90 : 60,
+      layoutFit: passed ? 90 : 60
+    },
+    issues
+  };
+}
+
+function titleCandidates(title: string, selectedId = "selected"): TitleCandidates {
+  return {
+    items: [
+      { id: selectedId, title, angle: "主标题", audienceFit: 90, brandFit: 90, clickPotential: 90, riskFlags: [] },
+      { id: "alt_1", title: `${title} 备选一`, angle: "备选", audienceFit: 80, brandFit: 80, clickPotential: 80, riskFlags: [] },
+      { id: "alt_2", title: `${title} 备选二`, angle: "备选", audienceFit: 80, brandFit: 80, clickPotential: 80, riskFlags: [] }
+    ],
+    selectedId,
+    selectionReason: "测试选中标题"
   };
 }
 
@@ -300,5 +332,82 @@ describe("wechat article creation graph", () => {
 
     expect(result.status).toBe("completed");
     expect(result.finalDocument).toBeDefined();
+  });
+
+  it("preserves the selected title when revision changes the draft title", async () => {
+    const demoAgents = createDemoCreationAgents();
+    let reviewCount = 0;
+    const agents: CreationAgents = {
+      ...demoAgents,
+      async reviewDraft() {
+        reviewCount += 1;
+        return reviewCount === 1
+          ? reviewReport(false, [{
+              code: "BODY_NEEDS_POLISH",
+              severity: "error",
+              target: "body",
+              instruction: "优化正文表达。"
+            }])
+          : reviewReport(true);
+      },
+      async reviseDraft(input) {
+        return {
+          ...input.draft,
+          title: "Revision 错误改写的标题",
+          intro: `${input.draft.intro} 已完成正文修订。`
+        };
+      }
+    };
+
+    const result = await runWechatArticleGraph(baseState("主题是小兰花获奖，面向舞蹈学员家长，写一篇公众号文章。"), {
+      agents
+    });
+    const selected = result.titles?.items.find((item) => item.id === result.titles?.selectedId);
+
+    expect(result.status).toBe("completed");
+    expect(result.draft?.title).toBe(selected?.title);
+    expect(result.finalDocument?.attrs.title).toBe(selected?.title);
+    expect(result.artifactValidation?.passed).toBe(true);
+  });
+
+  it("routes title review issues back to Title Agent instead of Revision", async () => {
+    const demoAgents = createDemoCreationAgents();
+    let titleCount = 0;
+    let reviewCount = 0;
+    let reviseCalled = false;
+    const agents: CreationAgents = {
+      ...demoAgents,
+      async createTitles() {
+        titleCount += 1;
+        return titleCount === 1
+          ? titleCandidates("第一版标题")
+          : titleCandidates("第二版标题");
+      },
+      async reviewDraft() {
+        reviewCount += 1;
+        return reviewCount === 1
+          ? reviewReport(false, [{
+              code: "TITLE_NOT_ACCURATE",
+              severity: "error",
+              target: "title",
+              instruction: "标题需要重新生成。"
+            }])
+          : reviewReport(true);
+      },
+      async reviseDraft(input) {
+        reviseCalled = true;
+        return input.draft;
+      }
+    };
+
+    const result = await runWechatArticleGraph(baseState("主题是小兰花获奖，面向舞蹈学员家长，写一篇公众号文章。"), {
+      agents
+    });
+
+    expect(result.status).toBe("completed");
+    expect(titleCount).toBe(2);
+    expect(reviseCalled).toBe(false);
+    expect(result.draft?.title).toBe("第二版标题");
+    expect(result.finalDocument?.attrs.title).toBe("第二版标题");
   });
 });

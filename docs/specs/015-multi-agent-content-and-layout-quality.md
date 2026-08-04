@@ -121,6 +121,8 @@ interface CreationRunContext {
 
 AgentOutput 必须记录 schema version、prompt version、model config ID、耗时和状态；不保存或返回思维链。
 
+Title Agent 是标题候选集合和选中标题的唯一来源。Writer、Reviewer 和 Revision 可以消费选中标题，但不得在非标题问题修订中改写最终标题。Reviewer 如果发现标题本身存在问题，必须把问题路由回 Title Agent 重新生成候选并更新 `selectedId`，而不是交给 Revision Agent 直接改写 `ArticleDraft.title`。
+
 ## 结构化正文
 
 正文从扁平 `paragraphs[]` 升级为按章节组织：
@@ -197,6 +199,8 @@ Reviewer 至少检查：
 
 主题理解错误回退 Brief；内容结构问题回退 Planner；正文问题回退 Writer；素材问题回退 Material / ImagePlan；版式问题回退 Layout。最多两轮修订，仍不合格则 Run failed 且不创建 Artifact。
 
+发布前 Artifact Builder 必须再次校验最终标题来源：`ArticleDraft.title` 必须严格等于 `TitleCandidates.selectedId` 指向的候选标题。若 Review 后的 Revision 造成标题漂移，应在进入 Artifact 前恢复选中标题；若标题问题需要改变标题，应先回退 Title Agent。违反该规则时返回 `ARTIFACT_VALIDATION_FAILED:TITLE_SOURCE_INVALID`，不得生成可发布预览。
+
 ## 可观测性
 
 - 每个真实节点写 `AgentTask`、`AgentOutput`、`step.started` 和 `step.completed`。
@@ -224,6 +228,7 @@ Reviewer 至少检查：
 - 用户局部修改指定章节时，其他章节和版式保持稳定。
 - 生产模型缺失时明确失败，不返回硬编码文章。
 - Reviewer 未通过时不存在 `artifact.created`。
+- Review / Revision 后最终标题仍来自 Title Agent `selectedId`；标题问题会回退 Title Agent，非标题问题不会改写标题。
 - 最终 HTML 只由 Renderer 生成，不包含模型输出的任意脚本和样式。
 
 ## 文档路由
