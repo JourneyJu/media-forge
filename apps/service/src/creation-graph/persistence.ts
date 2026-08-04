@@ -21,6 +21,12 @@ import {
   creationRunContextSchema
 } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
+import {
+  buildResourceContext,
+  extractArtifactResourceIds,
+  rebuildInstructionMemory,
+  type RebuildUserMessage
+} from "./context-rebuild";
 
 interface RunRow {
   id: string;
@@ -36,7 +42,8 @@ interface RunRow {
   updated_at: Date;
 }
 
-type CreationRunContextInput = Omit<CreationRunContext, "memory"> & Partial<Pick<CreationRunContext, "memory">>;
+type CreationRunContextInput = Omit<CreationRunContext, "memory" | "resourceContext"> &
+  Partial<Pick<CreationRunContext, "memory" | "resourceContext">>;
 
 interface EventRow {
   id: string;
@@ -116,6 +123,17 @@ export function mergeClarificationIntoRunContext(
     currentInstruction: mergedUserInput,
     memory: {
       ...graphContext.memory,
+      instructionMemory: {
+        ...graphContext.memory.instructionMemory,
+        recentValuableTurns: [
+          ...graphContext.memory.instructionMemory.recentValuableTurns.slice(-1),
+          {
+            messageId: "clarification",
+            content: clip(clarificationText, 4000),
+            reason: "用户补充了追问信息"
+          }
+        ]
+      },
       userConstraints: [
         ...graphContext.memory.userConstraints,
         clip(clarificationText, 500)
@@ -133,6 +151,15 @@ function createEmptyMemory(conversationId: string, contextVersion: number): Conv
   return {
     conversationId,
     contextVersion,
+    instructionMemory: {
+      recentValuableTurns: []
+    },
+    resourceContext: {
+      currentResourceIds: [],
+      inheritedResourceIds: [],
+      artifactResourceIds: [],
+      materialSummary: []
+    },
     materialSummary: [],
     userConstraints: [],
     updatedAt: now()
@@ -178,7 +205,9 @@ function createRunContext(
   conversationId: string,
   contextVersion: number,
   input: CreationRunContextInput,
-  memory: ConversationWorkingMemory
+  memory: ConversationWorkingMemory,
+  userMessages: RebuildUserMessage[],
+  artifactResourceIds: string[]
 ): CreationRunContext {
   const currentInstruction = input.currentInstruction ?? input.userInput;
   const creationMode = input.creationMode ?? (
@@ -198,19 +227,40 @@ function createRunContext(
   const memorySnapshot = creationMode === "new"
     ? createEmptyMemory(conversationId, contextVersion)
     : memory;
+  const currentResourceIds = input.currentResourceIds ?? input.resourceIds;
+  const inheritedResourceIds = input.inheritedResourceIds ?? [];
+  const currentMaterialSummary = currentResourceIds.map((resourceId) => ({
+    resourceId,
+    type: "unknown" as const,
+    description: `资源 ${resourceId}`
+  }));
+  const instructionMemory = rebuildInstructionMemory(userMessages, creationMode);
+  const resourceContext = buildResourceContext({
+    currentResourceIds,
+    inheritedResourceIds,
+    artifactResourceIds,
+    currentMaterialSummary,
+    previousMemory: memorySnapshot,
+    creationMode
+  });
 
   return creationRunContextSchema.parse({
     ...input,
     currentInstruction,
     creationMode,
+    currentResourceIds,
+    inheritedResourceIds,
+    resourceContext,
     contextVersion,
     memory: {
+      instructionMemory,
       brief: memorySnapshot.brief,
       selectedTitle: memorySnapshot.selectedTitle,
       outline: memorySnapshot.outline,
       layoutPlan: memorySnapshot.layoutPlan,
       draftSummary: memorySnapshot.draftSummary,
-      materialSummary: memorySnapshot.materialSummary,
+      resourceContext,
+      materialSummary: resourceContext.materialSummary,
       userConstraints: memorySnapshot.userConstraints,
       lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
       revisionIntent
@@ -271,6 +321,23 @@ function memoryFromGraphResult(
           ...state.materials.items
         ].slice(-50)
       : previous.materialSummary,
+    instructionMemory: previous.instructionMemory,
+    resourceContext: {
+      ...(previous.resourceContext ?? {
+        currentResourceIds: [],
+        inheritedResourceIds: [],
+        artifactResourceIds: [],
+        materialSummary: []
+      }),
+      materialSummary: state.materials
+        ? [
+            ...(previous.resourceContext?.materialSummary ?? previous.materialSummary).filter((previousItem) =>
+              !state.materials!.items.some((currentItem) => currentItem.resourceId === previousItem.resourceId)
+            ),
+            ...state.materials.items
+          ].slice(-50)
+        : previous.resourceContext?.materialSummary ?? previous.materialSummary
+    },
     userConstraints: previous.userConstraints,
     revisionIntent: undefined,
     lastArtifactId: artifact.id,
@@ -546,11 +613,26 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
     async createQueuedRun(run: CreationRun, context: CreationRunContextInput, job: CreationRunJob): Promise<void> {
       await withTransaction(async (client) => {
         const memory = await getConversationMemoryWithClient(client, run.conversationId, job.contextVersion);
+        const userMessagesResult = await client.query<{ id: string; content: string }>(
+          `select id, content from conversation_messages
+           where conversation_id = $1 and role = 'user'
+           order by created_at, id`,
+          [run.conversationId]
+        );
+        const latestArtifactResult = await client.query<{ payload_json: unknown }>(
+          `select payload_json from artifacts
+           where conversation_id = $1 and type = 'wechat_article'
+           order by created_at desc
+           limit 1`,
+          [run.conversationId]
+        );
         const runContext = createRunContext(
           run.conversationId,
           job.contextVersion,
           context,
-          memory
+          memory,
+          userMessagesResult.rows,
+          extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json)
         );
         await client.query(
           `insert into runs
@@ -700,6 +782,8 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
           nextContextVersion,
           {
             ...graphContext.memory,
+            instructionMemory: nextContext.memory.instructionMemory,
+            resourceContext: nextContext.memory.resourceContext,
             userConstraints: nextContext.memory.userConstraints,
             revisionIntent: nextContext.memory.revisionIntent,
             updatedAt: now()
@@ -802,6 +886,16 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
          set status = 'failed', error_code = $2, error_message = $3, completed_at = now()
          where id = $1`,
         [taskId, message.split(":")[0], message.slice(0, 500)]
+      );
+    },
+
+    async failRunningAgentTasks(runId: string, error: unknown): Promise<void> {
+      const message = error instanceof Error ? error.message : "AGENT_TASK_FAILED";
+      await pool.query(
+        `update agent_tasks
+         set status = 'failed', error_code = $2, error_message = $3, completed_at = now()
+         where run_id = $1 and status = 'running'`,
+        [runId, message.split(":")[0], message.slice(0, 500)]
       );
     },
 

@@ -80,6 +80,31 @@ describe("generateStructuredJsonWithGateway", () => {
     expect(retryRequest.messages.at(-1).content).toContain("items");
   });
 
+  it("retries transient provider errors inside the same agent call", async () => {
+    process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS = "0";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("temporary unavailable", { status: 503 }))
+      .mockResolvedValueOnce(completion('{"items":[]}'));
+    const onProgress = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateStructuredJsonWithGateway(config, {
+      agentName: "MaterialAgent",
+      systemPrompt: "Analyze materials.",
+      outputContract: '{"items":[]}',
+      input: { resourceIds: [] },
+      schema: z.object({ items: z.array(z.string()) }),
+      onProgress
+    });
+
+    expect(result).toEqual({ items: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      type: "retry",
+      phase: "retrying"
+    }));
+  });
+
   it("streams reasoning while buffering structured content", async () => {
     const stream = [
       'data: {"id":"request_stream","choices":[{"delta":{"reasoning_content":"正在分析素材"}}]}',

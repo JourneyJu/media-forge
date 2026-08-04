@@ -256,9 +256,46 @@ export const conversationMaterialSummarySchema = z.object({
   quality: z.enum(["high", "medium", "low"]).optional()
 });
 
+export const conversationInstructionMemorySchema = z.object({
+  rebuiltContext: z.object({
+    taskGoal: z.string().trim().max(300).optional(),
+    sourceRequest: z.string().trim().max(2000).optional(),
+    audience: z.string().trim().max(200).optional(),
+    styleConstraints: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+    contentRequirements: z.array(z.string().trim().min(1).max(300)).max(30).default([]),
+    prohibitedContent: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+    unresolvedQuestions: z.array(z.string().trim().min(1).max(300)).max(10).default([]),
+    confidence: z.enum(["high", "medium", "low"]).default("medium")
+  }).optional(),
+  recentValuableTurns: z.array(z.object({
+    messageId: z.string().trim().min(1),
+    content: z.string().trim().min(1).max(4000),
+    reason: z.string().trim().min(1).max(200)
+  })).max(2).default([])
+}).default({
+  recentValuableTurns: []
+});
+
+export const conversationResourceContextSchema = z.object({
+  currentResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
+  inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
+  artifactResourceIds: z.array(z.string().trim().min(1)).max(50).default([]),
+  materialSummary: z.array(conversationMaterialSummarySchema.extend({
+    originalName: z.string().trim().max(300).optional(),
+    contentType: z.string().trim().max(120).optional(),
+    sourceMessageId: z.string().trim().min(1).optional()
+  })).max(50).default([])
+}).default({
+  currentResourceIds: [],
+  inheritedResourceIds: [],
+  artifactResourceIds: [],
+  materialSummary: []
+});
+
 export const conversationWorkingMemorySchema = z.object({
   conversationId: z.string().trim().min(1),
   contextVersion: z.number().int().min(0),
+  instructionMemory: conversationInstructionMemorySchema,
   brief: creativeBriefSchema.optional(),
   selectedTitle: z.object({
     id: z.string().trim().min(1),
@@ -283,6 +320,7 @@ export const conversationWorkingMemorySchema = z.object({
     tone: z.string().trim().max(40).optional(),
     audience: z.string().trim().max(200).optional()
   }).optional(),
+  resourceContext: conversationResourceContextSchema,
   materialSummary: z.array(conversationMaterialSummarySchema).max(50).default([]),
   userConstraints: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
   revisionIntent: z.object({
@@ -295,9 +333,13 @@ export const conversationWorkingMemorySchema = z.object({
 });
 
 export type ConversationMaterialSummary = z.infer<typeof conversationMaterialSummarySchema>;
+export type ConversationInstructionMemory = z.infer<typeof conversationInstructionMemorySchema>;
+export type ConversationResourceContext = z.infer<typeof conversationResourceContextSchema>;
 export type ConversationWorkingMemory = z.infer<typeof conversationWorkingMemorySchema>;
 
 export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pick({
+  instructionMemory: true,
+  resourceContext: true,
   brief: true,
   selectedTitle: true,
   outline: true,
@@ -316,11 +358,21 @@ export const creationRunContextSchema = z.object({
   creationMode: creationModeSchema.exclude(["auto"]).default("new"),
   currentResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
+  resourceContext: conversationResourceContextSchema,
   skillId: z.string().trim().min(1),
   selectedSkills: z.array(resolvedUserSkillSchema).max(1).default([]),
   maxSteps: z.number().int().min(1).max(100),
   contextVersion: z.number().int().min(1).optional(),
   memory: creationRunContextMemorySchema.default({
+    instructionMemory: {
+      recentValuableTurns: []
+    },
+    resourceContext: {
+      currentResourceIds: [],
+      inheritedResourceIds: [],
+      artifactResourceIds: [],
+      materialSummary: []
+    },
     materialSummary: [],
     userConstraints: []
   })

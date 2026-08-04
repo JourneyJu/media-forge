@@ -5,7 +5,6 @@ import type {
   ConversationListItem,
   ConversationMessage,
   ConversationResource,
-  ConversationMaterialSummary,
   ConversationWorkingMemory,
   CreateConversationTurnRequest,
   CreateConversationTurnResponse,
@@ -25,6 +24,12 @@ import {
 import type { GenerateWechatArticleResponse } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
 import type { UserSkillService } from "../user-skills/user-skill-service";
+import {
+  buildResourceContext,
+  extractArtifactResourceIds,
+  rebuildInstructionMemory,
+  type RebuildUserMessage
+} from "../creation-graph/context-rebuild";
 
 interface ConversationRow {
   id: string;
@@ -170,6 +175,15 @@ function createEmptyMemory(conversationId: string, contextVersion: number): Conv
   return {
     conversationId,
     contextVersion,
+    instructionMemory: {
+      recentValuableTurns: []
+    },
+    resourceContext: {
+      currentResourceIds: [],
+      inheritedResourceIds: [],
+      artifactResourceIds: [],
+      materialSummary: []
+    },
     materialSummary: [],
     userConstraints: [],
     updatedAt: new Date().toISOString()
@@ -235,7 +249,9 @@ function createRunContext(
     requestedCreationMode: CreateConversationTurnRequest["creationMode"];
     currentResourceIds: string[];
     inheritedResourceIds: string[];
-    currentMaterialSummary: ConversationMaterialSummary[];
+    currentMaterialSummary: ConversationWorkingMemory["resourceContext"]["materialSummary"];
+    userMessages: RebuildUserMessage[];
+    artifactResourceIds: string[];
   },
   memory: ConversationWorkingMemory
 ): CreationRunContext {
@@ -255,9 +271,18 @@ function createRunContext(
   const memorySnapshot = creationMode === "new"
     ? createEmptyMemory(conversationId, contextVersion)
     : memory;
+  const instructionMemory = rebuildInstructionMemory(input.userMessages, creationMode);
+  const resourceContext = buildResourceContext({
+    currentResourceIds: input.currentResourceIds,
+    inheritedResourceIds: input.inheritedResourceIds,
+    artifactResourceIds: input.artifactResourceIds,
+    currentMaterialSummary: input.currentMaterialSummary,
+    previousMemory: memorySnapshot,
+    creationMode
+  });
   const selectedResources = new Set(input.resourceIds);
   const materialSummary = new Map(
-    memorySnapshot.materialSummary
+    resourceContext.materialSummary
       .filter((item) => selectedResources.has(item.resourceId))
       .map((item) => [item.resourceId, item])
   );
@@ -269,16 +294,19 @@ function createRunContext(
     creationMode,
     currentResourceIds: input.currentResourceIds,
     inheritedResourceIds: input.inheritedResourceIds,
+    resourceContext,
     skillId: input.skillId,
     selectedSkills: input.selectedSkills,
     maxSteps: input.maxSteps,
     contextVersion,
     memory: {
+      instructionMemory,
       brief: memorySnapshot.brief,
       selectedTitle: memorySnapshot.selectedTitle,
       outline: memorySnapshot.outline,
       layoutPlan: memorySnapshot.layoutPlan,
       draftSummary: memorySnapshot.draftSummary,
+      resourceContext,
       materialSummary: [...materialSummary.values()],
       userConstraints: memorySnapshot.userConstraints,
       lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
@@ -358,16 +386,32 @@ export function createConversationLifecycleService(
           [ownerId, resourceIds]
         )
       : { rows: [] };
-    const currentMaterialSummary: ConversationMaterialSummary[] = resourceResult.rows.map((resource) => ({
+    const currentMaterialSummary: ConversationWorkingMemory["resourceContext"]["materialSummary"] = resourceResult.rows.map((resource) => ({
       resourceId: resource.id,
       type: resource.content_type.startsWith("image/") ? "image" : "document",
       description: `素材“${clip(resource.original_name, 180)}”（${resource.content_type}，来源：${resource.source}）`,
+      originalName: resource.original_name,
+      contentType: resource.content_type,
       suggestedUsage: "由 Material Agent 结合本轮主题判断封面、正文配图或内容证据用途",
       quality: "medium"
     }));
     const selectedSkills = userSkills
       ? await userSkills.resolveMentions(ownerId, input.skillMentions)
       : [];
+    const userMessagesResult = await client.query<{ id: string; content: string }>(
+      `select id, content from conversation_messages
+       where conversation_id = $1 and role = 'user'
+       order by created_at, id`,
+      [conversationId]
+    );
+    const latestArtifactResult = await client.query<{ payload_json: unknown }>(
+      `select payload_json from artifacts
+       where conversation_id = $1 and type = 'wechat_article'
+       order by created_at desc
+       limit 1`,
+      [conversationId]
+    );
+    const artifactResourceIds = extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json);
     const runContext = createRunContext(
       conversationId,
       contextVersion,
@@ -380,7 +424,9 @@ export function createConversationLifecycleService(
         requestedCreationMode: input.creationMode,
         currentResourceIds: input.resourceIds,
         inheritedResourceIds: input.inheritedResourceIds,
-        currentMaterialSummary
+        currentMaterialSummary,
+        userMessages: userMessagesResult.rows,
+        artifactResourceIds
       },
       memory
     );

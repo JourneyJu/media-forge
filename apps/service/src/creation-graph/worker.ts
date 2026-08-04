@@ -109,6 +109,15 @@ export function shouldRetryCreationJob(attemptsMade: number, maxAttempts: number
   return attemptsMade + 1 < (maxAttempts ?? 1);
 }
 
+export async function closeStaleAgentTasksForAttempt(
+  persistence: Pick<CreationPersistence, "failRunningAgentTasks">,
+  runId: string,
+  attemptsMade: number
+): Promise<void> {
+  if (attemptsMade <= 0) return;
+  await persistence.failRunningAgentTasks(runId, new Error("CREATION_ATTEMPT_RESTARTED"));
+}
+
 function createAgentProgressReporter(
   runId: string,
   persistence: CreationPersistence
@@ -260,7 +269,8 @@ export async function enrichImageMaterials(
   const resources = dependencies.resources ?? createResourceService();
   const analyze = dependencies.analyze ?? analyzeAsset;
   const summaries = new Map(
-    (context.memory?.materialSummary ?? []).map((item) => [item.resourceId, item])
+    (context.memory?.resourceContext?.materialSummary ?? context.memory?.materialSummary ?? [])
+      .map((item) => [item.resourceId, item])
   );
   try {
     for (const resourceId of context.resourceIds) {
@@ -302,8 +312,21 @@ export async function enrichImageMaterials(
 
   return {
     ...context,
+    resourceContext: {
+      ...context.resourceContext,
+      materialSummary: [...summaries.values()]
+    },
     memory: {
       ...context.memory,
+      resourceContext: {
+        ...(context.memory?.resourceContext ?? {
+          currentResourceIds: context.currentResourceIds,
+          inheritedResourceIds: context.inheritedResourceIds,
+          artifactResourceIds: [],
+          materialSummary: []
+        }),
+        materialSummary: [...summaries.values()]
+      },
       materialSummary: [...summaries.values()],
       userConstraints: context.memory?.userConstraints ?? []
     }
@@ -356,6 +379,7 @@ export async function processCreationRunJob(
   persistence = createCreationPersistence()
 ): Promise<CreationGraphState> {
   const payload = creationRunJobSchema.parse(job.data);
+  await closeStaleAgentTasksForAttempt(persistence, payload.runId, job.attemptsMade);
   const storedContext = await persistence.getRunContext(payload.runId);
   const context = await enrichImageMaterials(payload, storedContext);
   const taskIds = new Map<string, string>();
@@ -483,10 +507,12 @@ export async function processCreationRunJob(
     const activeTask = [...taskIds.values()].at(-1);
     if (activeTask) await persistence.failAgentTask(activeTask, error);
     if (shouldRetryCreationJob(job.attemptsMade, job.opts.attempts)) {
+      await persistence.failRunningAgentTasks(payload.runId, error);
       await progressReporter.retry(job.attemptsMade + 1);
       await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
       throw error;
     }
+    await persistence.failRunningAgentTasks(payload.runId, error);
     await progressReporter.fail(error);
     await persistence.updateRun(payload.runId, "failed", "failed");
     await appendTaskCard(persistence, payload.runId, visibleSteps, "failed");

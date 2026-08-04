@@ -70,6 +70,8 @@ describe("creation graph contracts", () => {
 
     expect(context.memory.materialSummary).toEqual([]);
     expect(context.memory.userConstraints).toEqual([]);
+    expect(context.memory.instructionMemory.recentValuableTurns).toEqual([]);
+    expect(context.memory.resourceContext.materialSummary).toEqual([]);
     expect(context.creationMode).toBe("new");
     expect(context.currentResourceIds).toEqual([]);
   });
@@ -78,6 +80,22 @@ describe("creation graph contracts", () => {
     const memory = conversationWorkingMemorySchema.parse({
       conversationId: "conversation_1",
       contextVersion: 2,
+      instructionMemory: {
+        rebuiltContext: {
+          taskGoal: "儿童摄影品牌宣传",
+          sourceRequest: "历史需求摘要：儿童摄影品牌宣传。",
+          audience: "儿童家长",
+          styleConstraints: ["语气温暖"],
+          contentRequirements: ["继续围绕成长瞬间扩写。"],
+          prohibitedContent: [],
+          unresolvedQuestions: [],
+          confidence: "medium"
+        },
+        recentValuableTurns: [
+          { messageId: "message_1", content: "面向儿童家长，语气温暖。", reason: "包含目标读者和风格" },
+          { messageId: "message_2", content: "继续围绕成长瞬间扩写。", reason: "包含继续创作方向" }
+        ]
+      },
       selectedTitle: {
         id: "story",
         title: "把童年留在镜头里",
@@ -89,13 +107,25 @@ describe("creation graph contracts", () => {
         description: "儿童摄影样片",
         quality: "high"
       }],
+      resourceContext: {
+        currentResourceIds: ["resource_1"],
+        inheritedResourceIds: [],
+        artifactResourceIds: [],
+        materialSummary: [{
+          resourceId: "resource_1",
+          type: "image",
+          description: "儿童摄影样片",
+          quality: "high"
+        }]
+      },
       userConstraints: ["语气温暖"],
       lastArtifactId: "artifact_1",
       updatedAt: new Date("2026-08-02T00:00:00.000Z").toISOString()
     });
 
     expect(memory.conversationId).toBe("conversation_1");
-    expect(memory.materialSummary[0]?.resourceId).toBe("resource_1");
+    expect(memory.instructionMemory.recentValuableTurns).toHaveLength(2);
+    expect(memory.resourceContext.materialSummary[0]?.resourceId).toBe("resource_1");
     expect(memory.lastArtifactId).toBe("artifact_1");
   });
 });

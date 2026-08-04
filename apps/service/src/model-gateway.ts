@@ -33,6 +33,78 @@ export interface ModelGatewayProgressEvent {
   retryCount: number;
 }
 
+const transientGatewayStatuses = new Set([408, 429, 500, 502, 503, 504]);
+
+function modelGatewayRetryAttempts(): number {
+  const value = Number(process.env.MODEL_GATEWAY_RETRY_ATTEMPTS ?? 2);
+  return Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), 5) : 0;
+}
+
+function modelGatewayRetryDelayMs(attempt: number): number {
+  const baseDelayMs = Number(process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS ?? 500);
+  if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) return 0;
+  return Math.min(baseDelayMs * 2 ** attempt, 5_000);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && /abort|aborted/iu.test(`${error.name} ${error.message}`);
+}
+
+function isTransientFetchError(error: unknown): boolean {
+  return error instanceof TypeError || (
+    error instanceof Error
+    && !isAbortError(error)
+    && /econnreset|etimedout|socket|network|fetch failed/iu.test(error.message)
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchChatCompletionWithRetry(
+  config: ModelGatewayConfig,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  onProgress: ((event: ModelGatewayProgressEvent) => void | Promise<void>) | undefined,
+  retryCountOffset: number
+): Promise<Response> {
+  const maxRetries = modelGatewayRetryAttempts();
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body),
+        redirect: "error",
+        signal
+      });
+      if (!transientGatewayStatuses.has(response.status) || attempt >= maxRetries) {
+        return response;
+      }
+      lastError = new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+    } catch (error) {
+      if (!isTransientFetchError(error) || attempt >= maxRetries) throw error;
+      lastError = error;
+    }
+
+    await onProgress?.({
+      type: "retry",
+      phase: "retrying",
+      summary: "模型服务短暂不可用，正在自动重试",
+      retryCount: retryCountOffset + attempt + 1
+    });
+    await sleep(modelGatewayRetryDelayMs(attempt));
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("MODEL_GATEWAY_ERROR");
+}
+
 async function readCompletionResponse(
   response: Response,
   onProgress: ((event: ModelGatewayProgressEvent) => void | Promise<void>) | undefined,
@@ -280,20 +352,17 @@ export async function generateStructuredJsonWithGateway<T>(
         response_format: { type: "json_object" },
         messages
       };
-      let response = await fetch(`${config.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${config.apiKey}`,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
+      let response = await fetchChatCompletionWithRetry(
+        config,
+        {
           ...requestBody,
           stream: true,
           stream_options: { include_usage: true }
-        }),
-        redirect: "error",
-        signal: controller.signal
-      });
+        },
+        controller.signal,
+        options.onProgress,
+        attempt
+      );
 
       if ([400, 404, 422].includes(response.status)) {
         await options.onProgress?.({
@@ -302,16 +371,13 @@ export async function generateStructuredJsonWithGateway<T>(
           summary: "模型不支持流式响应，正在等待完整结果",
           retryCount: attempt
         });
-        response = await fetch(`${config.baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${config.apiKey}`,
-            "content-type": "application/json"
-          },
-          body: JSON.stringify(requestBody),
-          redirect: "error",
-          signal: controller.signal
-        });
+        response = await fetchChatCompletionWithRetry(
+          config,
+          requestBody,
+          controller.signal,
+          options.onProgress,
+          attempt
+        );
       }
 
       if (!response.ok) {

@@ -57,6 +57,19 @@ describe("wechat article creation graph", () => {
     const result = await runWechatArticleGraph({
       ...baseState("金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请围绕获奖现场重新创作。"),
       memory: {
+        instructionMemory: {
+          recentValuableTurns: [{
+            messageId: "message_1",
+            content: "金舞艺术的舞蹈《蚊子哪里跑》在小兰花获奖了，请围绕获奖现场重新创作。",
+            reason: "包含当前新主题"
+          }]
+        },
+        resourceContext: {
+          currentResourceIds: [],
+          inheritedResourceIds: [],
+          artifactResourceIds: [],
+          materialSummary: []
+        },
         materialSummary: [],
         userConstraints: [],
         brief: {
@@ -93,10 +106,62 @@ describe("wechat article creation graph", () => {
     expect(result.finalDocument).toBeUndefined();
   });
 
+  it("uses rebuilt history and recent valuable instructions when the latest input only says continue", async () => {
+    const result = await runWechatArticleGraph({
+      ...baseState("继续任务"),
+      memory: {
+        instructionMemory: {
+          rebuiltContext: {
+            taskGoal: "小兰花艺术节获奖",
+            sourceRequest: "请为春芽舞蹈学校写一篇公众号文章，主题是小兰花艺术节获奖。",
+            audience: "少儿舞蹈学员家长",
+            styleConstraints: ["风格热烈但不要夸张"],
+            contentRequirements: ["重点写《蚊子哪里跑》获奖现场、孩子成长和老师陪伴"],
+            prohibitedContent: [],
+            unresolvedQuestions: [],
+            confidence: "medium"
+          },
+          recentValuableTurns: [
+            { messageId: "message_1", content: "面向少儿舞蹈学员家长，风格热烈但不要夸张。", reason: "包含目标读者和风格" },
+            { messageId: "message_2", content: "重点写《蚊子哪里跑》获奖现场、孩子成长和老师陪伴。", reason: "包含内容重点" }
+          ]
+        },
+        resourceContext: {
+          currentResourceIds: [],
+          inheritedResourceIds: [],
+          artifactResourceIds: [],
+          materialSummary: []
+        },
+        materialSummary: [],
+        userConstraints: []
+      }
+    }, {
+      agents: createDemoCreationAgents()
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.brief?.subject).toContain("小兰花艺术节获奖");
+    expect(result.brief?.audience).toContain("少儿舞蹈学员家长");
+    expect(result.finalDocument?.attrs.title).not.toContain("继续任务");
+  });
+
   it("does not ask clarification for short revision requests with session memory", async () => {
     const result = await runWechatArticleGraph({
       ...baseState("标题更吸引人一点"),
       memory: {
+        instructionMemory: {
+          recentValuableTurns: [{
+            messageId: "message_1",
+            content: "写一篇儿童摄影品牌宣传，面向儿童家长，语气温暖。",
+            reason: "包含原始创作需求"
+          }]
+        },
+        resourceContext: {
+          currentResourceIds: [],
+          inheritedResourceIds: [],
+          artifactResourceIds: [],
+          materialSummary: []
+        },
         materialSummary: [],
         userConstraints: ["语气温暖"],
         lastArtifactId: "artifact_1",

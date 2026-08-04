@@ -37,6 +37,11 @@
 ## 会话记忆测试
 
 - 第一轮生成完成后，Working Memory 写入 brief、标题、提纲摘要、正文摘要和 `lastArtifactId`。
+- 后续 RunContext 使用模型辅助 `instructionMemory = 结构化 rebuiltContext + 最近 1 到 2 条有价值用户输入原文`，前端消息历史保持完整展示。
+- 用户只发送“继续任务”等短指令时，RunContext 仍保留前序长 prompt 的有价值内容，不让短指令覆盖创作主题。
+- 资源上下文使用 `resourceContext` 传递 `resourceId`、绑定关系、元数据和派生摘要，不用文本 rebuild 替代原始资源。
+- 新主题默认不继承历史资源；继续或修改任务只能继承用户显式选择资源或上一版 Artifact 已使用资源。
+- 素材摘要缺失或低质量时，Material / Vision Agent 可按 `resourceId` 重新读取原始资源或预览资源。
 - 修改类 Turn 能识别 `revise_existing`，并在 RunContext 中包含上一版 Artifact 引用。
 - 新主题 Turn 能识别 `new_creation`，避免错误沿用上一版正文。
 - RunContext 创建后保持冻结，后续用户消息不影响正在执行的 Run。

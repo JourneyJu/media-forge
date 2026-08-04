@@ -26,3 +26,7 @@
 | CONV-022 | RunContext 冻结 | Run 创建后用户立即继续发送另一条消息 | 已创建 Run 的 `graph_runs.context_json` 不变化，后一条消息创建独立上下文版本。 |
 | CONV-023 | 新会话隔离 | 新建 Conversation 后发送创作需求 | 不读取旧 Conversation 的 Working Memory。 |
 | CONV-024 | 删除清理记忆 | 删除包含 Working Memory 的 Conversation | Conversation 聚合清理后，对应 Working Memory 不存在。 |
+| CONV-025 | 继续任务保留长 prompt | 首轮发送长创作需求，后续只发送“继续任务” | 新 Run 的 `context_json.memory.instructionMemory` 包含历史 rebuild 和最近两条有价值原文，Brief 不把“继续任务”当成文章主题。 |
+| CONV-026 | 资源不被文本压缩替代 | 首轮上传图片并生成文章，后续继续任务 | 新 Run 的 `resourceContext` 保留已有 `resourceId`、元数据和素材摘要；原始资源仍可按 `resourceId` 读取。 |
+| CONV-027 | 新主题不继承旧资源 | 同一 Conversation 内发送新主题且未选择历史资源 | 新 Run 的 `resourceContext.currentResourceIds` 只包含本轮资源，不自动带入旧资源。 |
+| CONV-028 | 修改任务继承产物资源 | 用户修改上一版文章标题或语气 | 新 Run 可通过 `lastArtifactId` 找回上一版 Artifact 使用的 `artifactResourceIds`，但不继承未使用历史资源。 |

@@ -14,6 +14,19 @@ const context: CreationRunContext = {
   maxSteps: 12,
   contextVersion: 1,
   memory: {
+    instructionMemory: {
+      recentValuableTurns: [{
+        messageId: "message_1",
+        content: "请为儿童舞蹈获奖重新生成公众号文章",
+        reason: "包含创作主题"
+      }]
+    },
+    resourceContext: {
+      currentResourceIds: [],
+      inheritedResourceIds: [],
+      artifactResourceIds: [],
+      materialSummary: []
+    },
     materialSummary: [],
     userConstraints: []
   }

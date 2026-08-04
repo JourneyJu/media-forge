@@ -78,6 +78,8 @@ const GraphAnnotation = Annotation.Root({
 
 function requiresClarification(state: CreationGraphState): boolean {
   if (state.memory?.lastArtifactId) return false;
+  if (state.memory?.instructionMemory?.rebuiltContext) return false;
+  if ((state.memory?.instructionMemory?.recentValuableTurns ?? []).length > 0) return false;
   return state.userInput.trim().length < 12;
 }
 
@@ -203,7 +205,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         userInput: state.userInput,
         brief: requireBrief(state),
         materials: requireMaterials(state),
-        selectedSkills: state.selectedSkills
+        selectedSkills: state.selectedSkills,
+        memory: state.memory
       })
     }),
     (update) => `已完成 ${update.contentPlan?.sections.length ?? 0} 个章节的内容设计`

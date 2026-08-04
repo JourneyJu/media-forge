@@ -47,6 +47,7 @@ interface PlanInput {
   brief: CreativeBrief;
   materials: MaterialAnalysis;
   selectedSkills?: SelectedSkills;
+  memory?: CreationGraphState["memory"];
 }
 
 interface TitleInput {
@@ -125,6 +126,29 @@ function inferSubject(input: string): string {
   return clip(factualSubject || "公众号内容创作", 60);
 }
 
+function instructionContext(memory: CreationGraphState["memory"] | undefined): string {
+  const rebuilt = memory?.instructionMemory?.rebuiltContext;
+  const parts = [
+    rebuilt
+      ? [
+          rebuilt.taskGoal ? `任务目标：${rebuilt.taskGoal}` : "",
+          rebuilt.sourceRequest ? `原始核心需求：${rebuilt.sourceRequest}` : "",
+          rebuilt.audience ? `目标读者：${rebuilt.audience}` : "",
+          rebuilt.styleConstraints.length > 0 ? `风格约束：${rebuilt.styleConstraints.join("；")}` : "",
+          rebuilt.contentRequirements.length > 0 ? `内容要求：${rebuilt.contentRequirements.join("；")}` : "",
+          rebuilt.prohibitedContent.length > 0 ? `禁止内容：${rebuilt.prohibitedContent.join("；")}` : ""
+        ].filter(Boolean).join("\n")
+      : undefined,
+    ...(memory?.instructionMemory?.recentValuableTurns ?? []).map((turn) => turn.content)
+  ].filter((value): value is string => Boolean(value?.trim()));
+  return parts.join("\n\n");
+}
+
+function effectiveInstruction(userInput: string, memory: CreationGraphState["memory"] | undefined): string {
+  const context = instructionContext(memory);
+  return context ? `${context}\n\n本轮指令：${userInput}` : userInput;
+}
+
 function inferAudience(input: string): string {
   const match = input.match(/面向(?:的是)?\s*([^，。；;\n]+)/u);
   return clip(match?.[1] ?? "关注该主题的微信读者", 80);
@@ -152,7 +176,10 @@ function skillRules(skills: SelectedSkills | undefined): {
 }
 
 function createDemoMaterials(input: MaterialInput): MaterialAnalysis {
-  const remembered = new Map((input.memory?.materialSummary ?? []).map((item) => [item.resourceId, item]));
+  const remembered = new Map(
+    (input.memory?.resourceContext?.materialSummary ?? input.memory?.materialSummary ?? [])
+      .map((item) => [item.resourceId, item])
+  );
   return materialAnalysisSchema.parse({
     items: input.resourceIds.map((resourceId) => remembered.get(resourceId) ?? {
       resourceId,
@@ -166,18 +193,19 @@ function createDemoMaterials(input: MaterialInput): MaterialAnalysis {
 
 function createDemoBrief(input: BriefInput): CreativeBrief {
   const rules = skillRules(input.selectedSkills);
-  const subject = inferSubject(input.userInput);
-  const constraints = input.userInput
+  const effectiveInput = effectiveInstruction(input.userInput, input.memory);
+  const subject = inferSubject(effectiveInput);
+  const constraints = effectiveInput
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter((line) => /风格|语言|不要|避免|要求/u.test(line))
     .slice(0, 12);
   return creativeBriefSchema.parse({
     subject,
-    goal: /获奖|活动/u.test(input.userInput) ? "event" : /宣传|品牌/u.test(input.userInput) ? "brand" : "story",
-    audience: inferAudience(input.userInput),
+    goal: /获奖|活动/u.test(effectiveInput) ? "event" : /宣传|品牌/u.test(effectiveInput) ? "brand" : "story",
+    audience: inferAudience(effectiveInput),
     contentType: "公众号图文",
-    tone: /热烈|获奖|庆祝/u.test(input.userInput) ? "lively" : /温暖|自然/u.test(input.userInput) ? "warm" : "friendly",
+    tone: /热烈|获奖|庆祝/u.test(effectiveInput) ? "lively" : /温暖|自然/u.test(effectiveInput) ? "warm" : "friendly",
     storyAngle: `围绕“${subject}”的真实信息、现场细节和意义展开`,
     materialRequirements: input.materials.items.map((item) => item.description).slice(0, 20),
     resourceIds: input.resourceIds,
@@ -399,7 +427,7 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     buildBrief: (input) => generate({
       agentName: "BriefAgent",
-      systemPrompt: "只以本轮 userInput 为最高优先级，将需求提取为 CreativeBrief。subject 必须准确概括当前主题，不得沿用记忆中的旧主题；逐项保留用户约束和 Skill 规则。",
+      systemPrompt: "将 userInput、memory.instructionMemory 的历史 rebuild 摘要和最近两条有价值原文共同提取为 CreativeBrief。本轮 userInput 表达当前意图；当它只是继续、扩写或修改时，必须保留 instructionMemory 中的原始创作需求。creationMode=new 时不得沿用旧主题；逐项保留用户约束和 Skill 规则。",
       outputContract: '{"subject":"string","goal":"brand|promotion|event|education|story","audience":"string","contentType":"string","campaignObject?":"string","tone":"string","storyAngle":"string","materialRequirements":["string"],"resourceIds":["string"],"constraints":["string"],"prohibitedContent":["string"],"skillId":"string"}',
       input,
       schema: creativeBriefSchema,
@@ -407,7 +435,7 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     createContentPlan: (input) => generate({
       agentName: "ContentPlannerAgent",
-      systemPrompt: "先做内容设计再写正文。输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。禁止套用无关行业模板。",
+      systemPrompt: "先做内容设计再写正文。结合 Brief、userInput、memory.instructionMemory 的历史 rebuild 摘要和最近两条有价值原文，输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。禁止套用无关行业模板。",
       outputContract: '{"angle":"string","narrative":"string","requirements":[{"requirement":"string","evidence":"string"}],"sections":[至少3项{"heading":"string","purpose":"string","keyPoints":["string"],"assetRefs":["string"]}],"callToAction":"string"}',
       input,
       schema: contentPlanSchema,
