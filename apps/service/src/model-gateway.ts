@@ -66,6 +66,10 @@ function isTransientFetchError(error: unknown): boolean {
   );
 }
 
+function isInvalidModelResponse(error: unknown): boolean {
+  return error instanceof Error && error.message === "MODEL_GATEWAY_INVALID_RESPONSE";
+}
+
 function sleep(ms: number): Promise<void> {
   return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -415,12 +419,12 @@ export async function generateStructuredJsonWithGateway<T>(
       inputTokens += payload.usage?.prompt_tokens ?? 0;
       outputTokens += payload.usage?.completion_tokens ?? 0;
       totalTokens += payload.usage?.total_tokens ?? 0;
-      const content = payload.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error("MODEL_GATEWAY_INVALID_RESPONSE");
-      }
 
       try {
+        const content = payload.choices?.[0]?.message?.content;
+        if (!content) {
+          throw new Error("MODEL_GATEWAY_INVALID_RESPONSE");
+        }
         await options.onProgress?.({
           type: "phase",
           phase: "validating",
@@ -449,7 +453,7 @@ export async function generateStructuredJsonWithGateway<T>(
         });
         const details = error instanceof Error ? error.message.slice(0, 2000) : "JSON does not match the output contract";
         messages.push(
-          { role: "assistant", content },
+          { role: "assistant", content: payload.choices?.[0]?.message?.content ?? "" },
           {
             role: "user",
             content: `上一个 JSON 不符合输出契约。校验错误：${details}\n请严格按照输出契约返回完整替代 JSON，所有必填字段都必须存在。`

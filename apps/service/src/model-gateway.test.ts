@@ -111,6 +111,35 @@ describe("generateStructuredJsonWithGateway", () => {
     }));
   });
 
+  it("retries empty model content inside the same agent call", async () => {
+    process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS = "0";
+    const emptyCompletion = new Response(JSON.stringify({
+      id: "empty_request",
+      choices: [{ message: {} }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(emptyCompletion)
+      .mockResolvedValueOnce(completion('{"items":[]}'));
+    const onProgress = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateStructuredJsonWithGateway(config, {
+      agentName: "LayoutAgent",
+      systemPrompt: "Create layout.",
+      outputContract: '{"items":[]}',
+      input: { draft: {} },
+      schema: z.object({ items: z.array(z.string()) }),
+      onProgress
+    });
+
+    expect(result).toEqual({ items: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      type: "retry",
+      phase: "retrying"
+    }));
+  });
+
   it("retries request aborts inside the same agent call", async () => {
     process.env.MODEL_GATEWAY_RETRY_BASE_DELAY_MS = "0";
     const fetchMock = vi.fn()
