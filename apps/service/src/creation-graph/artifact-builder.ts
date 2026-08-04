@@ -128,7 +128,11 @@ function imageBlock(resourceId: string, planned: ImagePlanItem, sectionIndex?: n
       resourceId,
       src: `/resources/${encodeURIComponent(resourceId)}/content`,
       alt: planned.description,
-      ...(sectionIndex !== undefined ? { sectionIndex } : {})
+      ...(sectionIndex !== undefined ? { sectionIndex } : {}),
+      ...(planned.visualRole ? { visualRole: planned.visualRole } : {}),
+      ...(planned.matchReason ? { matchReason: planned.matchReason } : {}),
+      ...(planned.confidence !== undefined ? { confidence: planned.confidence } : {}),
+      ...(planned.captionHint ? { captionHint: planned.captionHint } : {})
     }
   };
 }
@@ -166,6 +170,11 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
     if (!planned || planned.placement !== "section") continue;
     layoutSectionImages.set(block.sectionIndex, [...(layoutSectionImages.get(block.sectionIndex) ?? []), planned]);
   }
+  const plannedSectionImages = new Map<number, ImagePlanItem[]>();
+  for (const item of input.imagePlan.items) {
+    if (item.placement !== "section" || item.sectionIndex === undefined || !item.resourceId) continue;
+    plannedSectionImages.set(item.sectionIndex, [...(plannedSectionImages.get(item.sectionIndex) ?? []), item]);
+  }
   const unassignedSectionImages = input.imagePlan.items.filter((item) =>
     item.placement === "section"
     && item.resourceId
@@ -189,12 +198,15 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
     for (const assetRef of section.assetRefs) {
       const planned = plannedImages.get(assetRef);
       if (!planned || usedResourceIds.has(assetRef)) continue;
+      if (planned.sectionIndex !== undefined && planned.sectionIndex !== sectionIndex) continue;
       content.push(imageBlock(assetRef, planned, sectionIndex));
       usedResourceIds.add(assetRef);
       insertedSectionImage = true;
     }
     if (!insertedSectionImage) {
-      const fallback = layoutSectionImages.get(sectionIndex)?.find((item) =>
+      const fallback = plannedSectionImages.get(sectionIndex)?.find((item) =>
+        item.resourceId && !usedResourceIds.has(item.resourceId)
+      ) ?? layoutSectionImages.get(sectionIndex)?.find((item) =>
         item.resourceId && !usedResourceIds.has(item.resourceId)
       ) ?? unassignedSectionImages.slice(unassignedImageIndex).find((item) =>
         item.resourceId && !usedResourceIds.has(item.resourceId)

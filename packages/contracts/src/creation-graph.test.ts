@@ -4,7 +4,9 @@ import {
   creationRunContextSchema,
   conversationWorkingMemorySchema,
   creativeBriefSchema,
+  imagePlanSchema,
   intentResolutionSchema,
+  materialAnalysisSchema,
   titleCandidatesSchema
 } from "./creation-graph";
 
@@ -91,6 +93,40 @@ describe("creation graph contracts", () => {
     expect(intent.mode).toBe("continue");
     expect(intent.sameTopic).toBe(true);
     expect(intent.inheritedMessageIds).toEqual(["message_1"]);
+  });
+
+  it("accepts image semantics and section-aware image placement", () => {
+    const materials = materialAnalysisSchema.parse({
+      items: [{
+        resourceId: "certificate_image",
+        type: "image",
+        description: "award certificate for the dance competition",
+        subjects: ["certificate"],
+        scene: "award proof",
+        visualTags: ["award", "certificate"],
+        suggestedRoles: ["fact_proof"],
+        quality: "high"
+      }]
+    });
+    const imagePlan = imagePlanSchema.parse({
+      items: [{
+        placement: "section",
+        resourceId: "certificate_image",
+        description: "获奖证书",
+        sectionIndex: 0,
+        visualRole: "proof",
+        matchReason: "证书图片支撑获奖事实章节",
+        confidence: 0.92,
+        captionHint: "获奖事实"
+      }]
+    });
+
+    expect(materials.items[0]?.suggestedRoles).toEqual(["fact_proof"]);
+    expect(imagePlan.items[0]).toMatchObject({
+      resourceId: "certificate_image",
+      sectionIndex: 0,
+      visualRole: "proof"
+    });
   });
 
   it("validates conversation scoped working memory", () => {

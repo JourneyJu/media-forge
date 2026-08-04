@@ -160,6 +160,42 @@ describe("artifact builder guard", () => {
     });
   });
 
+  it("uses image plan sectionIndex instead of a mismatched draft assetRef", () => {
+    const result = buildArticleDocument({
+      userInput: "涓哄皬鍏拌姳鑸炶箞鑾峰鍐欎竴绡囧叕浼楀彿鏂囩珷",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft: {
+        ...validDraft(),
+        sections: validDraft().sections.map((section, index) => ({
+          ...section,
+          assetRefs: index === 0 ? ["dance_1"] : []
+        }))
+      },
+      imagePlan: {
+        items: [{
+          placement: "section",
+          description: "舞台现场",
+          resourceId: "dance_1",
+          sectionIndex: 1,
+          visualRole: "scene",
+          matchReason: "图片与舞台现场章节匹配",
+          confidence: 0.9
+        }]
+      },
+      layoutPlan
+    });
+
+    expect(result.document.content.find((block) => block.type === "image")?.attrs).toMatchObject({
+      resourceId: "dance_1",
+      sectionIndex: 1,
+      visualRole: "scene",
+      confidence: 0.9
+    });
+  });
+
   it("places an unused cover image after the intro", () => {
     const result = buildArticleDocument({
       userInput: "涓哄皬鍏拌姳鑸炶箞鑾峰鍐欎竴绡囧叕浼楀彿鏂囩珷",

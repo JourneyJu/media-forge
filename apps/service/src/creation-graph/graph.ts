@@ -277,6 +277,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         contentPlan: requireContentPlan(state),
         titles: requireTitles(state),
         outline: requireOutline(state),
+        imagePlan: requireImagePlan(state),
         selectedSkills: state.selectedSkills,
         memory: state.memory
       })
@@ -292,7 +293,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
       imagePlan: await agents.planImages({
         brief: requireBrief(state),
         contentPlan: requireContentPlan(state),
-        draft: requireDraft(state),
+        outline: requireOutline(state),
         materials: requireMaterials(state),
         selectedSkills: state.selectedSkills
       })
@@ -412,12 +413,12 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     .addConditionalEdges("clarification_node", routeAfterClarification)
     .addEdge("planner_node", "title_node")
     .addEdge("title_node", "outline_node")
-    .addEdge("outline_node", "writer_node")
-    .addEdge("writer_node", "image_plan_node")
-    .addEdge("image_plan_node", "layout_node")
+    .addEdge("outline_node", "image_plan_node")
+    .addEdge("image_plan_node", "writer_node")
+    .addEdge("writer_node", "layout_node")
     .addEdge("layout_node", "review_node")
     .addConditionalEdges("review_node", routeAfterReview)
-    .addEdge("revision_node", "image_plan_node")
+    .addEdge("revision_node", "layout_node")
     .addEdge("artifact_node", END)
     .addEdge("fail_node", END)
     .compile();

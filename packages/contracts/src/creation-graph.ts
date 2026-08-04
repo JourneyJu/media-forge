@@ -115,12 +115,22 @@ export const articleOutlineSectionSchema = z.object({
 
 export type ArticleOutlineSection = z.infer<typeof articleOutlineSectionSchema>;
 
+export const imageNarrativeRoleSchema = z.enum(["cover", "fact_proof", "scene", "emotion", "detail", "ending", "gallery"]);
+export const imagePlacementSchema = z.enum(["cover", "section", "ending", "gallery"]);
+export const imageVisualRoleSchema = z.enum(["scene", "people", "award", "detail", "emotion", "proof", "brand"]);
+
 export const articleOutlineSchema = z.object({
   title: z.string().trim().min(1).max(64),
   subtitle: z.string().trim().max(100).optional(),
   openingHook: z.string().trim().min(1).max(300),
   callToAction: z.string().trim().min(1).max(300),
-  sections: z.array(articleOutlineSectionSchema).min(3).max(10)
+  sections: z.array(articleOutlineSectionSchema).min(3).max(10),
+  imageSlots: z.array(z.object({
+    resourceId: z.string().trim().min(1),
+    sectionIndex: z.number().int().min(0).max(9).optional(),
+    placement: imagePlacementSchema,
+    narrativePurpose: z.string().trim().min(1).max(300)
+  })).max(20).optional()
 });
 
 export type ArticleOutline = z.infer<typeof articleOutlineSchema>;
@@ -136,7 +146,12 @@ export const contentPlanSchema = z.object({
     heading: z.string().trim().min(1).max(100),
     purpose: z.string().trim().min(1).max(300),
     keyPoints: z.array(z.string().trim().min(1).max(300)).min(1).max(8),
-    assetRefs: z.array(z.string().trim().min(1)).max(10)
+    assetRefs: z.array(z.string().trim().min(1)).max(10),
+    candidateImageRefs: z.array(z.object({
+      resourceId: z.string().trim().min(1),
+      reason: z.string().trim().min(1).max(300),
+      role: imageNarrativeRoleSchema
+    })).max(10).optional()
   })).min(3).max(10),
   callToAction: z.string().trim().min(1).max(300)
 });
@@ -163,14 +178,19 @@ export const articleDraftSchema = z.object({
 export type ArticleDraft = z.infer<typeof articleDraftSchema>;
 
 export const imagePlanItemSchema = z.object({
-  placement: z.enum(["cover", "section", "ending"]),
+  placement: imagePlacementSchema,
   description: z.string().trim().min(1).max(500),
   resourceId: z.string().trim().min(1).optional(),
-  assetKey: z.string().trim().min(1).optional()
+  assetKey: z.string().trim().min(1).optional(),
+  sectionIndex: z.number().int().min(0).max(9).optional(),
+  visualRole: imageVisualRoleSchema.optional(),
+  matchReason: z.string().trim().min(1).max(500).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  captionHint: z.string().trim().min(1).max(200).optional()
 });
 
 export const imagePlanSchema = z.object({
-  items: z.array(imagePlanItemSchema).min(1).max(20)
+  items: z.array(imagePlanItemSchema).max(20)
 });
 
 export type ImagePlanItem = z.infer<typeof imagePlanItemSchema>;
@@ -183,7 +203,14 @@ export const materialAnalysisSchema = z.object({
     description: z.string().trim().min(1).max(1000),
     ocrText: z.string().trim().max(4000).optional(),
     suggestedUsage: z.string().trim().max(500).optional(),
-    quality: z.enum(["high", "medium", "low"]).optional()
+    quality: z.enum(["high", "medium", "low"]).optional(),
+    subjects: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    scene: z.string().trim().max(200).optional(),
+    actions: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    mood: z.string().trim().max(100).optional(),
+    visualTags: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
+    suggestedRoles: z.array(imageNarrativeRoleSchema).max(10).optional(),
+    riskNotes: z.array(z.string().trim().min(1).max(200)).max(10).optional()
   })).max(50)
 });
 
@@ -253,7 +280,14 @@ export const conversationMaterialSummarySchema = z.object({
   description: z.string().trim().min(1).max(1000),
   ocrText: z.string().trim().max(4000).optional(),
   suggestedUsage: z.string().trim().max(500).optional(),
-  quality: z.enum(["high", "medium", "low"]).optional()
+  quality: z.enum(["high", "medium", "low"]).optional(),
+  subjects: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  scene: z.string().trim().max(200).optional(),
+  actions: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  mood: z.string().trim().max(100).optional(),
+  visualTags: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
+  suggestedRoles: z.array(imageNarrativeRoleSchema).max(10).optional(),
+  riskNotes: z.array(z.string().trim().min(1).max(200)).max(10).optional()
 });
 
 export const conversationInstructionMemorySchema = z.object({

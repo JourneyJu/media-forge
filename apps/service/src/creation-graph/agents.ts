@@ -62,13 +62,15 @@ interface OutlineInput extends TitleInput {
 
 interface DraftInput extends OutlineInput {
   outline: ArticleOutline;
+  imagePlan: ImagePlan;
   memory?: CreationGraphState["memory"];
 }
 
 interface ImagePlanInput {
   brief: CreativeBrief;
   contentPlan: ContentPlan;
-  draft: ArticleDraft;
+  outline: ArticleOutline;
+  draft?: ArticleDraft;
   materials: MaterialAnalysis;
   selectedSkills?: SelectedSkills;
 }
@@ -291,7 +293,7 @@ function createDemoImagePlan(input: ImagePlanInput): ImagePlan {
   return imagePlanSchema.parse({
     items: [
       { placement: "cover", description: `选择最能代表“${input.brief.subject}”的清晰素材作为封面`, resourceId: refs[0] },
-      ...input.draft.sections.flatMap((section, index) => {
+      ...(input.draft?.sections ?? []).flatMap((section, index) => {
         const resourceId = section.assetRefs[0] ?? refs[index + 1];
         return resourceId ? [{ placement: "section" as const, description: `用于“${section.heading}”并作为内容证据`, resourceId }] : [];
       }),
@@ -364,15 +366,207 @@ function createDemoReview(input: ReviewInput): ReviewReport {
   });
 }
 
+function demoImageSemanticText(item: MaterialAnalysis["items"][number]): string {
+  return [
+    item.description,
+    item.ocrText,
+    item.suggestedUsage,
+    item.scene,
+    item.mood,
+    ...(item.subjects ?? []),
+    ...(item.actions ?? []),
+    ...(item.visualTags ?? []),
+    ...(item.suggestedRoles ?? []),
+    ...(item.riskNotes ?? [])
+  ].filter(Boolean).join(" ").toLocaleLowerCase();
+}
+
+function demoSectionSemanticText(section: ContentPlan["sections"][number]): string {
+  return [section.heading, section.purpose, ...section.keyPoints].join(" ").toLocaleLowerCase();
+}
+
+function demoNarrativeRole(item: MaterialAnalysis["items"][number]) {
+  const text = demoImageSemanticText(item);
+  if (/award|prize|certificate|medal|trophy|honor|proof|获奖|奖|证书|奖杯|奖牌|荣誉/u.test(text)) return "fact_proof" as const;
+  if (/stage|dance|performance|show|现场|舞台|舞蹈|表演|演出/u.test(text)) return "scene" as const;
+  if (/smile|hug|warm|happy|growth|thanks|笑|拥抱|温暖|成长|感谢/u.test(text)) return "emotion" as const;
+  return "detail" as const;
+}
+
+function demoImageCandidates(materials: MaterialAnalysis) {
+  return materials.items
+    .filter((item) => item.type === "image")
+    .map((item) => ({
+      resourceId: item.resourceId,
+      reason: [item.description, item.suggestedUsage, item.ocrText].filter(Boolean).join(" ").slice(0, 300) || "图片素材",
+      role: item.suggestedRoles?.[0] ?? demoNarrativeRole(item)
+    }));
+}
+
+function createSemanticDemoContentPlan(input: PlanInput): ContentPlan {
+  const subject = input.brief.subject;
+  const candidateImageRefs = demoImageCandidates(input.materials);
+  return contentPlanSchema.parse({
+    angle: `从事件事实进入，解释${subject}的过程、亮点和意义`,
+    narrative: "事实开场，现场展开，价值收束；图片作为提示词和事实证据参与内容策划。",
+    requirements: input.brief.constraints.map((requirement) => ({ requirement, evidence: "在对应章节落地" })),
+    sections: [
+      {
+        heading: "获奖事实与记录价值",
+        purpose: "交代核心事实和读者关系",
+        keyPoints: [subject, "获奖", "证书", "荣誉"],
+        assetRefs: candidateImageRefs.filter((item) => item.role === "fact_proof").map((item) => item.resourceId),
+        candidateImageRefs
+      },
+      {
+        heading: "舞台现场与关键瞬间",
+        purpose: "用现场素材和细节建立可信度",
+        keyPoints: ["舞台", "现场", "表演", "过程"],
+        assetRefs: candidateImageRefs.filter((item) => item.role === "scene").map((item) => item.resourceId),
+        candidateImageRefs
+      },
+      {
+        heading: "成长意义与温暖收束",
+        purpose: "提炼价值并完成情绪收束",
+        keyPoints: ["成长", "合影", "感谢", "下一步"],
+        assetRefs: candidateImageRefs.filter((item) => item.role === "emotion" || item.role === "detail").map((item) => item.resourceId),
+        candidateImageRefs
+      }
+    ],
+    callToAction: "邀请读者继续关注后续动态"
+  });
+}
+
+function createSemanticDemoOutline(input: OutlineInput): ArticleOutline {
+  const title = selectedTitle(input.titles);
+  return articleOutlineSchema.parse({
+    title: title.title,
+    subtitle: title.subtitle,
+    openingHook: `先交代“${input.brief.subject}”的核心事实，再进入现场细节。`,
+    callToAction: input.contentPlan.callToAction,
+    sections: input.contentPlan.sections.map((section) => ({
+      title: section.heading,
+      objective: section.purpose,
+      storyBeat: section.keyPoints.join("、"),
+      commercialGoal: "准确表达本轮主题并服务读者理解"
+    })),
+    imageSlots: input.contentPlan.sections.flatMap((section, sectionIndex) =>
+      (section.candidateImageRefs ?? []).slice(0, 2).map((candidate) => ({
+        resourceId: candidate.resourceId,
+        sectionIndex,
+        placement: "section" as const,
+        narrativePurpose: candidate.reason
+      }))
+    )
+  });
+}
+
+function demoSemanticScore(sectionText: string, imageText: string, sectionIndex: number) {
+  type VisualRole = "scene" | "people" | "award" | "detail" | "emotion" | "proof" | "brand";
+  const groups = [
+    { role: "proof" as const, terms: ["award", "prize", "certificate", "medal", "trophy", "honor", "proof", "获奖", "奖", "证书", "奖杯", "奖牌", "荣誉"] },
+    { role: "scene" as const, terms: ["stage", "dance", "performance", "show", "现场", "舞台", "舞蹈", "表演", "演出"] },
+    { role: "people" as const, terms: ["group", "children", "kids", "student", "teacher", "family", "people", "合影", "孩子", "学生", "老师", "家长"] },
+    { role: "emotion" as const, terms: ["smile", "hug", "warm", "happy", "growth", "thanks", "笑", "拥抱", "温暖", "成长", "感谢"] },
+    { role: "brand" as const, terms: ["logo", "brand", "poster", "qr", "海报", "品牌"] }
+  ];
+  let best: { role: VisualRole; score: number; reason: string } = {
+    role: "detail",
+    score: 0,
+    reason: "语义弱匹配，作为章节细节补充"
+  };
+  for (const group of groups) {
+    const sectionHits = group.terms.filter((term) => sectionText.includes(term)).length;
+    const imageHits = group.terms.filter((term) => imageText.includes(term)).length;
+    const score = sectionHits * imageHits;
+    if (score > best.score) best = { role: group.role, score, reason: `图片与章节共同命中 ${group.role} 语义` };
+  }
+  if (best.score === 0 && sectionIndex === 0 && /award|certificate|medal|trophy|honor|获奖|奖|证书|奖杯|奖牌|荣誉/u.test(imageText)) {
+    return { score: 1, visualRole: "proof" as const, reason: "首段事实交代优先使用获奖或证明类图片" };
+  }
+  return { score: best.score, visualRole: best.role, reason: best.reason };
+}
+
+function createSemanticDemoImagePlan(input: ImagePlanInput): ImagePlan {
+  const skillAssets = input.selectedSkills?.flatMap((skill) => skill.assets) ?? [];
+  const usedResourceIds = new Set<string>();
+  const sectionItems = input.contentPlan.sections.flatMap((section, sectionIndex) => {
+    const sectionText = demoSectionSemanticText(section);
+    const ranked = input.materials.items
+      .filter((item) => item.type === "image" && !usedResourceIds.has(item.resourceId))
+      .map((item) => {
+        const match = demoSemanticScore(sectionText, demoImageSemanticText(item), sectionIndex);
+        return { item, ...match };
+      })
+      .sort((left, right) => right.score - left.score);
+    const selected = ranked[0];
+    if (!selected) return [];
+    usedResourceIds.add(selected.item.resourceId);
+    const confidence = selected.score > 0 ? 0.86 : selected.item.quality === "low" ? 0.35 : 0.55;
+    return [{
+      placement: "section" as const,
+      description: selected.item.description,
+      resourceId: selected.item.resourceId,
+      sectionIndex,
+      visualRole: selected.visualRole,
+      matchReason: selected.reason,
+      confidence,
+      captionHint: section.heading
+    }];
+  });
+  const cover = sectionItems.find((item) => (item.confidence ?? 0) >= 0.8) ?? sectionItems[0];
+  return imagePlanSchema.parse({
+    items: [
+      ...(cover?.resourceId ? [{ ...cover, placement: "cover" as const, sectionIndex: undefined, matchReason: cover.matchReason ?? "选作封面素材" }] : []),
+      ...sectionItems,
+      ...skillAssets.map((asset) => ({
+        placement: asset.type === "qrcode" || asset.type === "logo" ? "ending" as const : "section" as const,
+        description: asset.usage,
+        assetKey: asset.key
+      }))
+    ]
+  });
+}
+
+function createSemanticDemoDraft(input: DraftInput): ArticleDraft {
+  const title = selectedTitle(input.titles);
+  const subject = input.brief.subject;
+  const imageRefsBySection = new Map<number, string[]>();
+  for (const item of input.imagePlan.items) {
+    if (item.placement !== "section" || item.sectionIndex === undefined || !item.resourceId) continue;
+    imageRefsBySection.set(item.sectionIndex, [...(imageRefsBySection.get(item.sectionIndex) ?? []), item.resourceId]);
+  }
+  return articleDraftSchema.parse({
+    title: title.title,
+    subtitle: title.subtitle,
+    intro: `关于${subject}，先说清楚事实，再让图片里的现场、证据和情绪自然进入正文。`,
+    sections: input.contentPlan.sections.map((section, index) => ({
+      heading: section.heading,
+      purpose: section.purpose,
+      paragraphs: [
+        index === 0
+          ? `${subject}构成了这篇文章的事实起点。围绕时间、人物和结果展开，读者才能快速理解事件本身。`
+          : index === 1
+            ? "真正让内容成立的是现场细节。把过程、动作和人物关系写具体，素材就不再只是装饰，而成为叙事证据。"
+            : "结果之外，更重要的是这段经历带来的成长、协作和新的期待。文章在这里完成价值收束。",
+        `这一部分围绕${section.keyPoints.join("、")}展开，并承接对应图片承担的叙事功能。`
+      ],
+      assetRefs: imageRefsBySection.get(index) ?? section.assetRefs
+    })),
+    conclusion: `一次值得记录的${subject}，既有清晰的事实，也有属于参与者的情感和意义。`,
+    callToAction: input.contentPlan.callToAction
+  });
+}
+
 function createDemoAgents(): CreationAgents {
   return {
     async analyzeMaterials(input) { return createDemoMaterials(input); },
     async buildBrief(input) { return createDemoBrief(input); },
-    async createContentPlan(input) { return createDemoContentPlan(input); },
+    async createContentPlan(input) { return createSemanticDemoContentPlan(input); },
     async createTitles(input) { return createDemoTitles(input); },
-    async createOutline(input) { return createDemoOutline(input); },
-    async writeDraft(input) { return createDemoDraft(input); },
-    async planImages(input) { return createDemoImagePlan(input); },
+    async createOutline(input) { return createSemanticDemoOutline(input); },
+    async writeDraft(input) { return createSemanticDemoDraft(input); },
+    async planImages(input) { return createSemanticDemoImagePlan(input); },
     async createLayout(input) { return createDemoLayout(input); },
     async reviewDraft(input) { return createDemoReview(input); },
     async reviseDraft(input) {
@@ -419,8 +613,8 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
   return {
     analyzeMaterials: (input) => generate({
       agentName: "MaterialAgent",
-      systemPrompt: "根据本轮资源 ID、已有素材摘要和 Skill 品牌资源生成 MaterialAnalysis。不得虚构图片内容；无法识别时标记 unknown。",
-      outputContract: '{"items":[{"resourceId":"string","type":"image|document|link|unknown","description":"string","ocrText?":"string","suggestedUsage?":"string","quality?":"high|medium|low"}]}。items 可为空数组。',
+      systemPrompt: "根据本轮资源 ID、已有素材摘要和 Skill 品牌资源生成 MaterialAnalysis。图片要保留结构化语义，供内容策划、结构设计和正文创作使用。不得虚构图片内容；无法识别时标记 unknown 或 low quality。",
+      outputContract: '{"items":[{"resourceId":"string","type":"image|document|link|unknown","description":"string","ocrText?":"string","suggestedUsage?":"string","quality?":"high|medium|low","subjects":["string"],"scene?":"string","actions":["string"],"mood?":"string","visualTags":["string"],"suggestedRoles":["cover|fact_proof|scene|emotion|detail|ending|gallery"],"riskNotes":["string"]}]}。items 可为空数组。',
       input,
       schema: materialAnalysisSchema,
       temperature: 0.1
@@ -435,8 +629,8 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     createContentPlan: (input) => generate({
       agentName: "ContentPlannerAgent",
-      systemPrompt: "先做内容设计再写正文。结合 Brief、userInput、memory.instructionMemory 的历史 rebuild 摘要和最近两条有价值原文，输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。禁止套用无关行业模板。",
-      outputContract: '{"angle":"string","narrative":"string","requirements":[{"requirement":"string","evidence":"string"}],"sections":[至少3项{"heading":"string","purpose":"string","keyPoints":["string"],"assetRefs":["string"]}],"callToAction":"string"}',
+      systemPrompt: "先做内容设计再写正文。结合 Brief、userInput、memory.instructionMemory 的历史 rebuild 摘要、最近两条有价值原文，以及 MaterialAnalysis 中的图片语义，输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。图片要作为事实证据和叙事素材参与规划；禁止按上传顺序硬塞图片，禁止套用无关行业模板。",
+      outputContract: '{"angle":"string","narrative":"string","requirements":[{"requirement":"string","evidence":"string"}],"sections":[至少3项{"heading":"string","purpose":"string","keyPoints":["string"],"assetRefs":["string"],"candidateImageRefs":[{"resourceId":"string","reason":"string","role":"cover|fact_proof|scene|emotion|detail|ending|gallery"}]}],"callToAction":"string"}',
       input,
       schema: contentPlanSchema,
       temperature: 0.45
@@ -451,15 +645,15 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     createOutline: (input) => generate({
       agentName: "OutlineAgent",
-      systemPrompt: "把 ContentPlan 和选定标题落实为公众号提纲，每节必须有独立目标、故事节拍和表达目标，不得改变当前主题。",
-      outputContract: '{"title":"string","subtitle?":"string","openingHook":"string","callToAction":"string","sections":[至少3项{"title":"string","objective":"string","storyBeat":"string","commercialGoal":"string"}]}',
+      systemPrompt: "把 ContentPlan 和选定标题落实为公众号提纲，每节必须有独立目标、故事节拍和表达目标，并初步确定关键图片位置。图片位置要服务章节叙事，不得按上传顺序排列，不得改变当前主题。",
+      outputContract: '{"title":"string","subtitle?":"string","openingHook":"string","callToAction":"string","sections":[至少3项{"title":"string","objective":"string","storyBeat":"string","commercialGoal":"string"}],"imageSlots":[{"resourceId":"string","sectionIndex?":0到9整数,"placement":"cover|section|ending|gallery","narrativePurpose":"string"}]}',
       input,
       schema: articleOutlineSchema,
       temperature: 0.4
     }),
     writeDraft: (input) => generate({
       agentName: "WriterAgent",
-      systemPrompt: "严格按照 Brief、ContentPlan 和 Outline 写结构化中文正文。每个 section 明确 purpose、段落和 assetRefs，使用具体事实与场景，禁止输出指令、计划、审校说明、AI 过程或无关旧主题。",
+      systemPrompt: "严格按照 Brief、ContentPlan、Outline 和 ImagePlan 写结构化中文正文。图片是提示词和叙事素材，不是排版装饰；每个 section 的 assetRefs 必须优先来自 ImagePlan 中相同 sectionIndex 的 resourceId，并在正文里自然承接图片内容。禁止输出指令、计划、审校说明、AI 过程或无关旧主题。",
       outputContract: '{"title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
       input,
       schema: articleDraftSchema,
@@ -467,15 +661,15 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     planImages: (input) => generate({
       agentName: "ImagePlannerAgent",
-      systemPrompt: "根据 MaterialAnalysis、ContentPlan 和结构化正文规划封面与章节图片。只引用输入中存在的 resourceId 或 Skill assetKey，不得虚构 URL。",
-      outputContract: '{"items":[至少1项{"placement":"cover|section|ending","description":"string","resourceId?":"只能引用输入中的resourceId","assetKey?":"只能引用输入中的assetKey"}]}',
+      systemPrompt: "在正文创作之前，根据 MaterialAnalysis 的图片语义、ContentPlan 的章节目的和 Outline 的图片槽位规划封面与章节图片。不要按上传顺序机械填充；必须按图片内容与章节叙事目的匹配。只引用输入中存在的 resourceId 或 Skill assetKey，不得虚构 URL。低置信度图片可以降级为 gallery 或不进入核心章节。",
+      outputContract: '{"items":[至少1项{"placement":"cover|section|ending|gallery","description":"string","resourceId?":"只能引用输入中的resourceId","assetKey?":"只能引用输入中的assetKey","sectionIndex?":0到9整数,"visualRole?":"scene|people|award|detail|emotion|proof|brand","matchReason?":"string","confidence?":0到1数字,"captionHint?":"string"}]}',
       input,
       schema: imagePlanSchema,
       temperature: 0.3
     }),
     createLayout: (input) => generate({
       agentName: "LayoutAgent",
-      systemPrompt: "根据当前主题、内容密度、图片计划和 Skill 生成受控 LayoutPlan。版式必须服务当前主题；只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
+      systemPrompt: "根据当前主题、内容密度、已经确定的图片计划和 Skill 生成受控 LayoutPlan。版式只负责视觉呈现，不重新决定图片语义归属；image block 的 assetRef 应来自 ImagePlan，并保持对应 sectionIndex。只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
       outputContract: '{"theme":"editorial|celebration|story|report|brand","palette":{"primary":"#RRGGBB","accent":"#RRGGBB","text":"#RRGGBB","surface":"#RRGGBB"},"titleTreatment":"centered|left-editorial|poster","introTreatment":"plain|quote|highlight-panel","sectionTreatment":"numbered|labelled|minimal|timeline","imageTreatment":"full-width|framed|gallery","blocks":[至少2项{"kind":"title|intro|section|image|quote|brand|cta","sectionIndex?":0到9整数,"assetRef?":"string"}]}',
       input,
       schema: layoutPlanSchema,

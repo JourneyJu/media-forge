@@ -201,6 +201,66 @@ describe("wechat article creation graph", () => {
     expect(result.finalDocument).toBeUndefined();
   });
 
+  it("matches shuffled images to sections by semantic content before writing", async () => {
+    const result = await runWechatArticleGraph({
+      ...baseState("金舞艺术舞蹈《蚊子哪里跑》在小兰花奖获奖，请围绕获奖事实、舞台现场和孩子成长写公众号文章。"),
+      resourceIds: ["group_photo", "certificate_photo", "stage_photo"],
+      memory: {
+        instructionMemory: {
+          recentValuableTurns: []
+        },
+        resourceContext: {
+          currentResourceIds: ["group_photo", "certificate_photo", "stage_photo"],
+          inheritedResourceIds: [],
+          artifactResourceIds: [],
+          materialSummary: [
+            {
+              resourceId: "group_photo",
+              type: "image",
+              description: "children group photo with teacher, warm smiling family moment",
+              suggestedUsage: "use for growth or ending emotion",
+              visualTags: ["group", "children", "growth"],
+              suggestedRoles: ["emotion"],
+              quality: "high"
+            },
+            {
+              resourceId: "certificate_photo",
+              type: "image",
+              description: "award certificate and medal for dance competition",
+              suggestedUsage: "use as proof for award facts",
+              visualTags: ["award", "certificate", "medal"],
+              suggestedRoles: ["fact_proof"],
+              quality: "high"
+            },
+            {
+              resourceId: "stage_photo",
+              type: "image",
+              description: "dance stage performance scene with children on stage",
+              suggestedUsage: "use for stage performance section",
+              visualTags: ["stage", "dance", "performance"],
+              suggestedRoles: ["scene"],
+              quality: "high"
+            }
+          ]
+        },
+        materialSummary: [],
+        userConstraints: []
+      }
+    }, {
+      agents: createDemoCreationAgents()
+    });
+
+    const sectionImages = result.imagePlan?.items.filter((item) => item.placement === "section") ?? [];
+    expect(sectionImages.map((item) => [item.sectionIndex, item.resourceId])).toEqual([
+      [0, "certificate_photo"],
+      [1, "stage_photo"],
+      [2, "group_photo"]
+    ]);
+    expect(result.draft?.sections[0]?.assetRefs).toEqual(["certificate_photo"]);
+    expect(result.draft?.sections[1]?.assetRefs).toEqual(["stage_photo"]);
+    expect(result.draft?.sections[2]?.assetRefs).toEqual(["group_photo"]);
+  });
+
   it("does not ask clarification for short revision requests with session memory", async () => {
     const result = await runWechatArticleGraph({
       ...baseState("标题更吸引人一点"),
