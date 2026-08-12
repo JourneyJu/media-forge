@@ -45,6 +45,12 @@
 | API 测试 | 追问提交、任务列表、事件流。 |
 | UI 测试 | 对话流、任务卡、手机预览更新。 |
 
+## 结构身份与版本验证
+
+结构一致性测试应覆盖 `sectionId` 和 `structureVersion` 在 ContentPlan、Outline、Draft、ImagePlan、LayoutPlan 与 ArticleDocument 之间的完整传递。标题文本变化不应改变章节身份；增删、换序、重复 ID、未知引用和过期版本必须在责任节点后的 Structure Guard 被发现。
+
+模型输出纠错测试需要区分两类重试：schema/结构格式纠错不消耗内容 Revision 次数，Review 引发的内容修订按现有修订上限计数。历史兼容测试必须验证旧 payload 只读映射和无法可靠映射时的重跑行为。
+
 ## 流式过程反馈
 
 - Gateway 正确解析跨 chunk 的 `reasoning_content` 和 `content`。
@@ -169,3 +175,7 @@ Writer Agent 抛错
 - 增量事件写放大导致 PostgreSQL 压力。
 - 模型流结束但 Run 没有终态，页面静默停止。
 - Layout Agent 输出任意 HTML/CSS 绕过可信 Renderer。
+- 章节标题被误当作身份，正常润色触发 `CONTENT_PLAN_DRIFT`。
+- 新 ContentPlan 与旧 Draft、ImagePlan 或 LayoutPlan 因缺少结构版本而混用。
+- Revision 擅自增删或换序章节，直到 Artifact 阶段才被发现。
+- 历史适配器通过标题相似度猜测章节，掩盖真实结构冲突。

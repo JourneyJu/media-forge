@@ -31,6 +31,7 @@ describe("renderWechatArticle", () => {
       content: [{ id: "heading_1", type: "heading", attrs: { sectionIndex: 0 }, content: [{ type: "text", text: "舞台时刻" }] }]
     };
     const plan: LayoutPlan = {
+      structureVersion: "structure_1",
       theme: "celebration",
       palette: { primary: "#C51D5D", accent: "#F2B134", text: "#20252B", surface: "#F7F8F6" },
       titleTreatment: "poster",

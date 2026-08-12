@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  articleDraftSchema,
+  articleOutlineSchema,
+  contentPlanSchema,
   creationRunJobSchema,
   creationRunContextSchema,
   conversationWorkingMemorySchema,
@@ -109,8 +112,10 @@ describe("creation graph contracts", () => {
       }]
     });
     const imagePlan = imagePlanSchema.parse({
+      structureVersion: "structure_1",
       items: [{
         placement: "section",
+        sectionId: "section_1",
         resourceId: "certificate_image",
         description: "获奖证书",
         sectionIndex: 0,
@@ -180,5 +185,49 @@ describe("creation graph contracts", () => {
     expect(memory.instructionMemory.recentValuableTurns).toHaveLength(2);
     expect(memory.resourceContext.materialSummary[0]?.resourceId).toBe("resource_1");
     expect(memory.lastArtifactId).toBe("artifact_1");
+  });
+
+  it("carries stable section identity through plans, outlines, and drafts", () => {
+    const plan = contentPlanSchema.parse({
+      structureVersion: "structure_1",
+      angle: "event",
+      narrative: "fact to meaning",
+      requirements: [],
+      sections: [
+        { sectionId: "section_1", heading: "opening", purpose: "open", keyPoints: ["award"], assetRefs: [] },
+        { sectionId: "section_2", heading: "practice", purpose: "process", keyPoints: ["effort"], assetRefs: [] },
+        { sectionId: "section_3", heading: "future", purpose: "close", keyPoints: ["next"], assetRefs: [] }
+      ],
+      callToAction: "follow"
+    });
+    const outline = articleOutlineSchema.parse({
+      structureVersion: plan.structureVersion,
+      title: "award moment",
+      openingHook: "opening",
+      callToAction: "follow",
+      sections: plan.sections.map((section) => ({
+        sectionId: section.sectionId,
+        title: section.heading,
+        objective: section.purpose,
+        storyBeat: section.keyPoints[0],
+        commercialGoal: "accurate"
+      }))
+    });
+    const draft = articleDraftSchema.parse({
+      structureVersion: plan.structureVersion,
+      title: "award moment",
+      intro: "award news",
+      sections: outline.sections.map((section) => ({
+        sectionId: section.sectionId,
+        heading: section.sectionId === "section_1" ? "the light on stage" : section.title,
+        purpose: section.objective,
+        paragraphs: ["body"],
+        assetRefs: []
+      })),
+      conclusion: "keep going"
+    });
+
+    expect(draft.structureVersion).toBe("structure_1");
+    expect(draft.sections[0]).toMatchObject({ sectionId: "section_1", heading: "the light on stage" });
   });
 });

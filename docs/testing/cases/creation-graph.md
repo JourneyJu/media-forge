@@ -256,3 +256,57 @@
 步骤：配置 BullMQ `attempts=3`，让前两次模型调用超时、第三次成功。
 
 期望：前两次只产生 `agent.retry.started`，Run 和 SSE 保持活动；第三次成功后只产生一个 `run.completed`。如果第三次仍失败，才产生唯一 `run.failed`。
+
+## CG-037 章节标题自然润色不构成结构漂移
+
+前置：ContentPlan 章节包含稳定 `sectionId`，展示标题为“开场：舞台上的那一束光”。
+
+步骤：Writer 或 Revision 保留同一 `sectionId`，将标题改为“舞台上的那一束光”。
+
+期望：Structure Guard 通过；图片和版式仍关联原章节；Artifact 正常生成，不返回 `CONTENT_PLAN_DRIFT`。
+
+## CG-038 Revision 篡改章节集合立即失败
+
+步骤：分别模拟 Revision 删除章节、新增未知章节、重复 `sectionId` 和交换章节顺序。
+
+期望：在 Revision 后分别返回 `SECTION_SET_MISMATCH`、`SECTION_ID_DUPLICATED` 或 `SECTION_ORDER_DRIFT`；不进入 Layout、Review 或 Artifact。
+
+## CG-039 图片与版式引用未知章节
+
+步骤：让 ImagePlan 或 LayoutPlan 使用不在当前 ContentPlan 中的 `sectionId`。
+
+期望：责任节点后的 Structure Guard 返回 `SECTION_REFERENCE_INVALID`；不通过标题或索引猜测归属。
+
+## CG-040 结构重规划使旧产物失效
+
+前置：已存在同一 Run 的 ContentPlan、Draft、ImagePlan 和 LayoutPlan。
+
+步骤：Reviewer 返回 `target=plan`，Content Planner 合法增删或换序章节并生成新 `structureVersion`，随后尝试复用旧 Draft 或 LayoutPlan。
+
+期望：旧产物返回 `STRUCTURE_VERSION_STALE`；Graph 从最早受影响节点重跑，所有下游输出使用新版本。
+
+## CG-041 Review 按问题类型定向回退
+
+步骤：分别生成 `title`、`body`、`image`、`layout`、`plan` 和 `brief` 问题。
+
+期望：依次回到 Title、Revision、Image Planner、Layout、Content Planner 和 Brief/Clarification；多个问题从最上游受影响节点开始，不统一交给 Revision。
+
+## CG-042 模型章节身份纠错
+
+步骤：模型第一次漏传、重复或生成未知 `sectionId`，第二次根据允许 ID 列表返回正确结构。
+
+期望：第一次产生结构化纠错事件，第二次通过；纠错不消耗内容 Revision 轮次。第二次仍失败时节点明确失败且不创建 Artifact。
+
+## CG-043 历史无章节身份输出兼容
+
+前置：历史 AgentOutput 没有 `sectionId` 和 `structureVersion`。
+
+步骤：分别准备章节数量与索引一致、标题前缀不同的历史输出，以及章节数量不一致或引用越界的输出。
+
+期望：前者按 `runId + 章节序号` 只读映射并允许重新生成；后者不做语义猜测，从最早受影响节点重跑；历史快照和已发布 ArticleVersion 不被回写。
+
+## CG-044 结构门禁日志与安全摘要
+
+步骤：触发一个 `SECTION_SET_MISMATCH`。
+
+期望：后台日志包含 `runId`、节点、`structureVersion`、错误码和预期/实际 ID 集合，不包含完整 prompt、思维链、密钥或未脱敏正文；用户侧显示可理解的结构失败摘要。

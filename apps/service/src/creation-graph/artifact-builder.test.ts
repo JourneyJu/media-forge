@@ -132,6 +132,25 @@ describe("artifact builder guard", () => {
     expect(result.document.attrs.scenario).toBe("celebration");
   });
 
+  it("accepts a polished heading when the stable section identity is unchanged", () => {
+    const draft = validDraft();
+    draft.sections[0]!.heading = "舞台上的获奖消息";
+
+    const result = buildArticleDocument({
+      userInput: "为小兰花舞蹈获奖写一篇公众号文章",
+      brief,
+      contentPlan,
+      titles,
+      outline,
+      draft,
+      imagePlan,
+      layoutPlan
+    });
+
+    expect(result.validation.passed).toBe(true);
+    expect(result.document.content.find((block) => block.type === "heading")?.content?.[0]?.text).toBe("舞台上的获奖消息");
+  });
+
   it("falls back to image plan resources when draft assetRefs are missing", () => {
     const draft = {
       ...validDraft(),

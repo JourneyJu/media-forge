@@ -18,6 +18,7 @@ import { adminConsole } from "../admin-console";
 import { createResourceService } from "../assets/resource-service";
 import { analyzeAsset } from "../vision-gateway";
 import type { ModelGatewayProgressEvent } from "../model-gateway";
+import { StructureGuardError } from "./structure-guard";
 
 interface VisibleStep {
   id: string;
@@ -98,6 +99,7 @@ export function sanitizeAgentProgressText(value: string): string {
 export function getCreationRunFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (/aborted|aborterror/iu.test(message)) return "模型响应超时，任务已结束，请重新生成。";
+  if (message.includes("STRUCTURE_GUARD_FAILED") || /SECTION_(?:ID|SET|ORDER|REFERENCE)|STRUCTURE_VERSION/iu.test(message)) return "创作产物的章节结构不一致，已停止生成以避免图片或正文错位。";
   if (message.includes("SUBJECT_MISMATCH")) return "最终内容与本轮主题匹配不足，未生成可发布预览。";
   if (message.includes("ARTIFACT_VALIDATION_FAILED")) return "最终内容未通过发布校验，未生成可发布预览。";
   if (message.includes("CREATION_RUN_TIMEOUT")) return "本次创作超过最长处理时间，任务已结束。";
@@ -519,7 +521,10 @@ export async function processCreationRunJob(
     await persistence.updateRun(payload.runId, "failed", "failed");
     await appendTaskCard(persistence, payload.runId, visibleSteps, "failed");
     await persistence.appendEvent(payload.runId, "run.failed", {
-      message: getCreationRunFailureMessage(error)
+      message: getCreationRunFailureMessage(error),
+      ...(error instanceof StructureGuardError ? {
+        structureGuard: { code: error.code, details: error.details }
+      } : {})
     });
     await adminConsole.finishGeneration(
       payload.runId,

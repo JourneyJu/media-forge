@@ -120,6 +120,19 @@ Revision Agent 默认不得修改标题、副标题或标题候选集合。Revie
 - 用户原始 prompt 不得被当作标题。
 - 审校后的自然修订不得让最终标题脱离 Title Agent 的 `selectedId`。
 
+## 章节身份与结构版本
+
+当前实现仍依赖标题与 `sectionIndex`，可能把标题自然润色误判为 `CONTENT_PLAN_DRIFT`。目标实现中，跨 Agent 章节关联以服务端生成的 `sectionId` 为事实，不以 `heading`、`title` 或标题相似度判断身份。`ContentPlan` 通过 schema 后生成章节 ID 和 `structureVersion`，Outline、Draft、ImagePlan、LayoutPlan 与 ArticleDocument 必须沿用该身份。
+
+- 章节展示标题允许 Writer 或 Revision 自然润色，不改变 `sectionId`。
+- `sectionIndex` 只用于排序和渲染，由当前章节顺序派生。
+- Writer 和 Revision 不得增删、换序或替换章节身份。
+- 合法结构调整必须回到 Content Planner，产生新 `structureVersion`，并使旧下游输出失效。
+- Outline、ImagePlan、Draft、Revision 和 Layout 输出后执行确定性 Structure Guard；结构错误不得拖到 Artifact 阶段首次发现。
+- 历史无 ID 输出只在读取层按旧索引适配；无法一一映射时重跑受影响节点，不回写历史快照。
+
+Structure Guard 使用 `SECTION_ID_MISSING`、`SECTION_ID_DUPLICATED`、`SECTION_SET_MISMATCH`、`SECTION_ORDER_DRIFT`、`SECTION_REFERENCE_INVALID` 和 `STRUCTURE_VERSION_STALE` 区分失败原因。完整方案见 `docs/specs/020-stable-section-identity-and-structure-guard.md`。
+
 ## 会话记忆输入
 
 Creation Graph 不维护跨会话长期记忆。它只消费 `conversations` 模块在 Run 创建时冻结的 `CreationRunContext`，其中可包含当前会话的 Working Memory 摘要。

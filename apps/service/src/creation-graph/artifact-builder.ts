@@ -17,6 +17,16 @@ import {
   type TitleCandidates
 } from "@mediaforge/contracts";
 import { renderWechatArticle } from "../wechat-renderer";
+import {
+  assignContentPlanIdentity,
+  assertDraftStructure,
+  assertImagePlanStructure,
+  assertLayoutPlanStructure,
+  normalizeDraftStructure,
+  normalizeImagePlanStructure,
+  normalizeLayoutPlanStructure,
+  StructureGuardError
+} from "./structure-guard";
 
 const processCopyPattern = /帮我(?:写|做)|要求如下|我会先|执行计划|审校报告|思考过程|作为\s*AI|AI\s*味/u;
 
@@ -54,6 +64,33 @@ function normalizeTopicText(value: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
+function normalizeArtifactInput(input: ArtifactBuilderInput): ArtifactBuilderInput {
+  const contentPlan = assignContentPlanIdentity(input.contentPlan, `legacy:${input.brief.subject}`);
+  const draft = normalizeDraftStructure(contentPlan, input.draft);
+  const rawImagePlan = input.imagePlan as unknown as { items?: Array<Record<string, unknown>> };
+  const imagePlan = normalizeImagePlanStructure(contentPlan, {
+    ...input.imagePlan,
+    items: (rawImagePlan.items ?? []).map((item) => {
+      if (item.placement !== "section" || item.sectionId) return item;
+      const index = typeof item.sectionIndex === "number"
+        ? item.sectionIndex
+        : input.layoutPlan.blocks.find((block) =>
+            block.kind === "image" && block.assetRef === item.resourceId && block.sectionIndex !== undefined
+          )?.sectionIndex ?? draft.sections.findIndex((section) =>
+          typeof item.resourceId === "string" && section.assetRefs.includes(item.resourceId)
+        );
+      return index >= 0 ? { ...item, sectionIndex: index, sectionId: contentPlan.sections[index]?.sectionId } : item;
+    })
+  });
+  return {
+    ...input,
+    contentPlan,
+    draft,
+    imagePlan,
+    layoutPlan: normalizeLayoutPlanStructure(contentPlan, input.layoutPlan)
+  };
+}
+
 export function hasSubjectCoverage(subject: string, article: string): boolean {
   const normalizedSubject = normalizeTopicText(subject);
   const normalizedArticle = normalizeTopicText(article);
@@ -69,6 +106,7 @@ export function hasSubjectCoverage(subject: string, article: string): boolean {
 }
 
 export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactValidationResult {
+  input = normalizeArtifactInput(input);
   const violations: Array<{ code: string; message: string }> = [];
   const selected = getSelectedTitle(input.titles);
   const text = articleText(input.draft);
@@ -94,9 +132,16 @@ export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactVa
   if (!hasSubjectCoverage(input.brief.subject, normalizedArticle)) {
     violations.push({ code: "SUBJECT_MISMATCH", message: "最终内容没有围绕本轮 CreativeBrief 主题" });
   }
-  const plannedHeadings = new Set(input.contentPlan.sections.map((section) => section.heading));
-  if (input.draft.sections.some((section) => !plannedHeadings.has(section.heading))) {
-    violations.push({ code: "CONTENT_PLAN_DRIFT", message: "正文结构偏离 ContentPlan" });
+  try {
+    assertDraftStructure(input.contentPlan, input.draft);
+    assertImagePlanStructure(input.contentPlan, input.imagePlan);
+    assertLayoutPlanStructure(input.contentPlan, input.layoutPlan);
+  } catch (error) {
+    if (error instanceof StructureGuardError) {
+      violations.push({ code: error.code, message: "结构化产物与当前内容规划不一致" });
+    } else {
+      throw error;
+    }
   }
   if (layoutPlanSchema.safeParse(input.layoutPlan).success === false) {
     violations.push({ code: "LAYOUT_PLAN_INVALID", message: "LayoutPlan 不符合受控 schema" });
@@ -120,7 +165,7 @@ function textBlock(type: "paragraph" | "callout" | "quote" | "footer", text: str
   return { id: randomUUID(), type, attrs, content: [{ type: "text" as const, text }] };
 }
 
-function imageBlock(resourceId: string, planned: ImagePlanItem, sectionIndex?: number) {
+function imageBlock(resourceId: string, planned: ImagePlanItem, sectionIndex?: number, sectionId?: string) {
   return {
     id: randomUUID(),
     type: "image" as const,
@@ -129,6 +174,7 @@ function imageBlock(resourceId: string, planned: ImagePlanItem, sectionIndex?: n
       src: `/resources/${encodeURIComponent(resourceId)}/content`,
       alt: planned.description,
       ...(sectionIndex !== undefined ? { sectionIndex } : {}),
+      ...(sectionId ? { sectionId } : {}),
       ...(planned.visualRole ? { visualRole: planned.visualRole } : {}),
       ...(planned.matchReason ? { matchReason: planned.matchReason } : {}),
       ...(planned.confidence !== undefined ? { confidence: planned.confidence } : {}),
@@ -141,6 +187,7 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
   document: ArticleDocument;
   validation: ArtifactValidationResult;
 } {
+  input = normalizeArtifactInput(input);
   const validation = validateArticleArtifact(input);
   if (!validation.passed) {
     throw new Error(`ARTIFACT_VALIDATION_FAILED:${validation.violations.map((item) => item.code).join(",")}`);
@@ -163,17 +210,17 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
     content.push(imageBlock(coverImage.resourceId, coverImage));
     usedResourceIds.add(coverImage.resourceId);
   }
-  const layoutSectionImages = new Map<number, ImagePlanItem[]>();
+  const layoutSectionImages = new Map<string, ImagePlanItem[]>();
   for (const block of input.layoutPlan.blocks) {
-    if (block.kind !== "image" || block.sectionIndex === undefined || !block.assetRef) continue;
+    if (block.kind !== "image" || !block.sectionId || !block.assetRef) continue;
     const planned = plannedImages.get(block.assetRef);
     if (!planned || planned.placement !== "section") continue;
-    layoutSectionImages.set(block.sectionIndex, [...(layoutSectionImages.get(block.sectionIndex) ?? []), planned]);
+    layoutSectionImages.set(block.sectionId, [...(layoutSectionImages.get(block.sectionId) ?? []), planned]);
   }
-  const plannedSectionImages = new Map<number, ImagePlanItem[]>();
+  const plannedSectionImages = new Map<string, ImagePlanItem[]>();
   for (const item of input.imagePlan.items) {
-    if (item.placement !== "section" || item.sectionIndex === undefined || !item.resourceId) continue;
-    plannedSectionImages.set(item.sectionIndex, [...(plannedSectionImages.get(item.sectionIndex) ?? []), item]);
+    if (item.placement !== "section" || !item.sectionId || !item.resourceId) continue;
+    plannedSectionImages.set(item.sectionId, [...(plannedSectionImages.get(item.sectionId) ?? []), item]);
   }
   const unassignedSectionImages = input.imagePlan.items.filter((item) =>
     item.placement === "section"
@@ -188,31 +235,31 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
     content.push({
       id: randomUUID(),
       type: "heading",
-      attrs: { sectionIndex, treatment: input.layoutPlan.sectionTreatment },
+      attrs: { sectionIndex, sectionId: section.sectionId, treatment: input.layoutPlan.sectionTreatment },
       content: [{ type: "text", text: section.heading }]
     });
     for (const paragraph of section.paragraphs) {
-      content.push(textBlock("paragraph", paragraph, { sectionIndex }));
+      content.push(textBlock("paragraph", paragraph, { sectionIndex, sectionId: section.sectionId }));
     }
-    if (section.emphasis) content.push(textBlock("quote", section.emphasis, { sectionIndex }));
+    if (section.emphasis) content.push(textBlock("quote", section.emphasis, { sectionIndex, sectionId: section.sectionId }));
     for (const assetRef of section.assetRefs) {
       const planned = plannedImages.get(assetRef);
       if (!planned || usedResourceIds.has(assetRef)) continue;
-      if (planned.sectionIndex !== undefined && planned.sectionIndex !== sectionIndex) continue;
-      content.push(imageBlock(assetRef, planned, sectionIndex));
+      if (planned.sectionId && planned.sectionId !== section.sectionId) continue;
+      content.push(imageBlock(assetRef, planned, sectionIndex, section.sectionId));
       usedResourceIds.add(assetRef);
       insertedSectionImage = true;
     }
     if (!insertedSectionImage) {
-      const fallback = plannedSectionImages.get(sectionIndex)?.find((item) =>
+      const fallback = plannedSectionImages.get(section.sectionId)?.find((item) =>
         item.resourceId && !usedResourceIds.has(item.resourceId)
-      ) ?? layoutSectionImages.get(sectionIndex)?.find((item) =>
+      ) ?? layoutSectionImages.get(section.sectionId)?.find((item) =>
         item.resourceId && !usedResourceIds.has(item.resourceId)
       ) ?? unassignedSectionImages.slice(unassignedImageIndex).find((item) =>
         item.resourceId && !usedResourceIds.has(item.resourceId)
       );
       if (fallback?.resourceId) {
-        content.push(imageBlock(fallback.resourceId, fallback, sectionIndex));
+        content.push(imageBlock(fallback.resourceId, fallback, sectionIndex, section.sectionId));
         usedResourceIds.add(fallback.resourceId);
         const index = unassignedSectionImages.indexOf(fallback);
         if (index >= unassignedImageIndex) unassignedImageIndex = index + 1;
@@ -246,7 +293,7 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
     validation,
     document: articleDocumentSchema.parse({
       type: "doc",
-      attrs: { title: input.draft.title, scenario: input.layoutPlan.theme },
+      attrs: { title: input.draft.title, scenario: input.layoutPlan.theme, structureVersion: input.contentPlan.structureVersion },
       content
     })
   };

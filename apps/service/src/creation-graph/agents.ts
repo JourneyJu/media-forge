@@ -1,6 +1,7 @@
 import {
   articleDraftSchema,
   articleOutlineSchema,
+  contentPlanInputSchema,
   contentPlanSchema,
   creativeBriefSchema,
   imagePlanSchema,
@@ -11,6 +12,7 @@ import {
   type ArticleDraft,
   type ArticleOutline,
   type ContentPlan,
+  type ContentPlanInput,
   type CreationGraphState,
   type CreativeBrief,
   type ImagePlan,
@@ -96,7 +98,7 @@ interface RevisionInput extends ReviewInput {
 export interface CreationAgents {
   analyzeMaterials(input: MaterialInput): Promise<MaterialAnalysis>;
   buildBrief(input: BriefInput): Promise<CreativeBrief>;
-  createContentPlan(input: PlanInput): Promise<ContentPlan>;
+  createContentPlan(input: PlanInput): Promise<ContentPlanInput>;
   createTitles(input: TitleInput): Promise<TitleCandidates>;
   createOutline(input: OutlineInput): Promise<ArticleOutline>;
   writeDraft(input: DraftInput): Promise<ArticleDraft>;
@@ -217,10 +219,10 @@ function createDemoBrief(input: BriefInput): CreativeBrief {
   });
 }
 
-function createDemoContentPlan(input: PlanInput): ContentPlan {
+function createDemoContentPlan(input: PlanInput): ContentPlanInput {
   const subject = input.brief.subject;
   const assetRefs = input.materials.items.map((item) => item.resourceId);
-  return contentPlanSchema.parse({
+  return contentPlanInputSchema.parse({
     angle: `从事件事实进入，解释${subject}的过程、亮点和意义`,
     narrative: "事实开场，现场展开，价值收束，避免套用与主题无关的行业模板。",
     requirements: input.brief.constraints.map((requirement) => ({ requirement, evidence: "在对应章节落实" })),
@@ -249,11 +251,13 @@ function createDemoTitles(input: TitleInput): TitleCandidates {
 function createDemoOutline(input: OutlineInput): ArticleOutline {
   const title = selectedTitle(input.titles);
   return articleOutlineSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     title: title.title,
     subtitle: title.subtitle,
     openingHook: `先交代“${input.brief.subject}”的核心事实，再进入现场细节。`,
     callToAction: input.contentPlan.callToAction,
     sections: input.contentPlan.sections.map((section) => ({
+      sectionId: section.sectionId,
       title: section.heading,
       objective: section.purpose,
       storyBeat: section.keyPoints.join("、"),
@@ -266,10 +270,12 @@ function createDemoDraft(input: DraftInput): ArticleDraft {
   const title = selectedTitle(input.titles);
   const subject = input.brief.subject;
   return articleDraftSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     title: title.title,
     subtitle: title.subtitle,
     intro: `关于${subject}，最值得先说清楚的不是一句热闹的口号，而是这件事真实发生的经过，以及它为什么值得被记录。`,
     sections: input.contentPlan.sections.map((section, index) => ({
+      sectionId: section.sectionId,
       heading: section.heading,
       purpose: section.purpose,
       paragraphs: [
@@ -291,16 +297,21 @@ function createDemoImagePlan(input: ImagePlanInput): ImagePlan {
   const refs = input.materials.items.map((item) => item.resourceId);
   const skillAssets = input.selectedSkills?.flatMap((skill) => skill.assets) ?? [];
   return imagePlanSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     items: [
       { placement: "cover", description: `选择最能代表“${input.brief.subject}”的清晰素材作为封面`, resourceId: refs[0] },
       ...(input.draft?.sections ?? []).flatMap((section, index) => {
         const resourceId = section.assetRefs[0] ?? refs[index + 1];
-        return resourceId ? [{ placement: "section" as const, description: `用于“${section.heading}”并作为内容证据`, resourceId }] : [];
+        return resourceId ? [{ placement: "section" as const, description: `用于“${section.heading}”并作为内容证据`, resourceId, sectionIndex: index, sectionId: section.sectionId }] : [];
       }),
       ...skillAssets.map((asset) => ({
         placement: asset.type === "qrcode" || asset.type === "logo" ? "ending" as const : "section" as const,
         description: asset.usage,
-        assetKey: asset.key
+        assetKey: asset.key,
+        ...(asset.type === "qrcode" || asset.type === "logo" ? {} : {
+          sectionIndex: 0,
+          sectionId: input.contentPlan.sections[0]?.sectionId
+        })
       }))
     ]
   });
@@ -311,6 +322,7 @@ function createDemoLayout(input: LayoutInput): LayoutPlan {
   const skill = input.selectedSkills?.[0];
   const primary = skill?.manifest.style.primaryColor;
   return layoutPlanSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     theme: celebratory ? "celebration" : "editorial",
     palette: {
       primary: primary && /^#[0-9a-fA-F]{6}$/u.test(primary) ? primary : celebratory ? "#C51D5D" : "#16745B",
@@ -326,8 +338,8 @@ function createDemoLayout(input: LayoutInput): LayoutPlan {
       { kind: "title" },
       { kind: "intro" },
       ...input.draft.sections.flatMap((section, sectionIndex) => [
-        { kind: "section" as const, sectionIndex },
-        ...section.assetRefs.slice(0, 1).map((assetRef) => ({ kind: "image" as const, sectionIndex, assetRef }))
+        { kind: "section" as const, sectionIndex, sectionId: section.sectionId },
+        ...section.assetRefs.slice(0, 1).map((assetRef) => ({ kind: "image" as const, sectionIndex, sectionId: section.sectionId, assetRef }))
       ]),
       { kind: "cta" }
     ]
@@ -403,10 +415,10 @@ function demoImageCandidates(materials: MaterialAnalysis) {
     }));
 }
 
-function createSemanticDemoContentPlan(input: PlanInput): ContentPlan {
+function createSemanticDemoContentPlan(input: PlanInput): ContentPlanInput {
   const subject = input.brief.subject;
   const candidateImageRefs = demoImageCandidates(input.materials);
-  return contentPlanSchema.parse({
+  return contentPlanInputSchema.parse({
     angle: `从事件事实进入，解释${subject}的过程、亮点和意义`,
     narrative: "事实开场，现场展开，价值收束；图片作为提示词和事实证据参与内容策划。",
     requirements: input.brief.constraints.map((requirement) => ({ requirement, evidence: "在对应章节落地" })),
@@ -440,11 +452,13 @@ function createSemanticDemoContentPlan(input: PlanInput): ContentPlan {
 function createSemanticDemoOutline(input: OutlineInput): ArticleOutline {
   const title = selectedTitle(input.titles);
   return articleOutlineSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     title: title.title,
     subtitle: title.subtitle,
     openingHook: `先交代“${input.brief.subject}”的核心事实，再进入现场细节。`,
     callToAction: input.contentPlan.callToAction,
     sections: input.contentPlan.sections.map((section) => ({
+      sectionId: section.sectionId,
       title: section.heading,
       objective: section.purpose,
       storyBeat: section.keyPoints.join("、"),
@@ -508,6 +522,7 @@ function createSemanticDemoImagePlan(input: ImagePlanInput): ImagePlan {
       description: selected.item.description,
       resourceId: selected.item.resourceId,
       sectionIndex,
+      sectionId: section.sectionId,
       visualRole: selected.visualRole,
       matchReason: selected.reason,
       confidence,
@@ -516,13 +531,18 @@ function createSemanticDemoImagePlan(input: ImagePlanInput): ImagePlan {
   });
   const cover = sectionItems.find((item) => (item.confidence ?? 0) >= 0.8) ?? sectionItems[0];
   return imagePlanSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     items: [
       ...(cover?.resourceId ? [{ ...cover, placement: "cover" as const, sectionIndex: undefined, matchReason: cover.matchReason ?? "选作封面素材" }] : []),
       ...sectionItems,
       ...skillAssets.map((asset) => ({
         placement: asset.type === "qrcode" || asset.type === "logo" ? "ending" as const : "section" as const,
         description: asset.usage,
-        assetKey: asset.key
+        assetKey: asset.key,
+        ...(asset.type === "qrcode" || asset.type === "logo" ? {} : {
+          sectionIndex: 0,
+          sectionId: input.contentPlan.sections[0]?.sectionId
+        })
       }))
     ]
   });
@@ -537,10 +557,12 @@ function createSemanticDemoDraft(input: DraftInput): ArticleDraft {
     imageRefsBySection.set(item.sectionIndex, [...(imageRefsBySection.get(item.sectionIndex) ?? []), item.resourceId]);
   }
   return articleDraftSchema.parse({
+    structureVersion: input.contentPlan.structureVersion,
     title: title.title,
     subtitle: title.subtitle,
     intro: `关于${subject}，先说清楚事实，再让图片里的现场、证据和情绪自然进入正文。`,
     sections: input.contentPlan.sections.map((section, index) => ({
+      sectionId: section.sectionId,
       heading: section.heading,
       purpose: section.purpose,
       paragraphs: [
@@ -632,7 +654,7 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
       systemPrompt: "先做内容设计再写正文。结合 Brief、userInput、memory.instructionMemory 的历史 rebuild 摘要、最近两条有价值原文，以及 MaterialAnalysis 中的图片语义，输出当前主题的叙事角度、主线、至少三个章节、每章目的、关键点、素材映射和用户要求覆盖证据。图片要作为事实证据和叙事素材参与规划；禁止按上传顺序硬塞图片，禁止套用无关行业模板。",
       outputContract: '{"angle":"string","narrative":"string","requirements":[{"requirement":"string","evidence":"string"}],"sections":[至少3项{"heading":"string","purpose":"string","keyPoints":["string"],"assetRefs":["string"],"candidateImageRefs":[{"resourceId":"string","reason":"string","role":"cover|fact_proof|scene|emotion|detail|ending|gallery"}]}],"callToAction":"string"}',
       input,
-      schema: contentPlanSchema,
+      schema: contentPlanInputSchema,
       temperature: 0.45
     }),
     createTitles: (input) => generate({
@@ -645,32 +667,32 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     createOutline: (input) => generate({
       agentName: "OutlineAgent",
-      systemPrompt: "把 ContentPlan 和选定标题落实为公众号提纲，每节必须有独立目标、故事节拍和表达目标，并初步确定关键图片位置。图片位置要服务章节叙事，不得按上传顺序排列，不得改变当前主题。",
-      outputContract: '{"title":"string","subtitle?":"string","openingHook":"string","callToAction":"string","sections":[至少3项{"title":"string","objective":"string","storyBeat":"string","commercialGoal":"string"}],"imageSlots":[{"resourceId":"string","sectionIndex?":0到9整数,"placement":"cover|section|ending|gallery","narrativePurpose":"string"}]}',
+      systemPrompt: "把 ContentPlan 和选定标题落实为公众号提纲，每节必须有独立目标、故事节拍和表达目标，并初步确定关键图片位置。必须原样返回 ContentPlan 的 structureVersion，并按原顺序原样透传每章 sectionId；不得新增、删除、交换或改写 sectionId。图片位置要服务章节叙事，不得按上传顺序排列，不得改变当前主题。",
+      outputContract: '{"structureVersion":"原样返回输入值","title":"string","subtitle?":"string","openingHook":"string","callToAction":"string","sections":[至少3项{"sectionId":"原样返回对应章节ID","title":"string","objective":"string","storyBeat":"string","commercialGoal":"string"}],"imageSlots":[{"resourceId":"string","sectionIndex?":0到9整数,"placement":"cover|section|ending|gallery","narrativePurpose":"string"}]}',
       input,
       schema: articleOutlineSchema,
       temperature: 0.4
     }),
     writeDraft: (input) => generate({
       agentName: "WriterAgent",
-      systemPrompt: "严格按照 Brief、ContentPlan、Outline 和 ImagePlan 写结构化中文正文。图片是提示词和叙事素材，不是排版装饰；每个 section 的 assetRefs 必须优先来自 ImagePlan 中相同 sectionIndex 的 resourceId，并在正文里自然承接图片内容。禁止输出指令、计划、审校说明、AI 过程或无关旧主题。",
-      outputContract: '{"title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
+      systemPrompt: "严格按照 Brief、ContentPlan、Outline 和 ImagePlan 写结构化中文正文。必须原样返回 ContentPlan 的 structureVersion，并按原顺序原样透传每章 sectionId；heading 可以自然润色，但不得新增、删除、交换或改写 sectionId。图片是提示词和叙事素材，不是排版装饰；每个 section 的 assetRefs 必须优先来自 ImagePlan 中相同 sectionId 的 resourceId，并在正文里自然承接图片内容。禁止输出指令、计划、审校说明、AI 过程或无关旧主题。",
+      outputContract: '{"structureVersion":"原样返回输入值","title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"sectionId":"原样返回对应章节ID","heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
       input,
       schema: articleDraftSchema,
       temperature: 0.65
     }),
     planImages: (input) => generate({
       agentName: "ImagePlannerAgent",
-      systemPrompt: "在正文创作之前，根据 MaterialAnalysis 的图片语义、ContentPlan 的章节目的和 Outline 的图片槽位规划封面与章节图片。不要按上传顺序机械填充；必须按图片内容与章节叙事目的匹配。只引用输入中存在的 resourceId 或 Skill assetKey，不得虚构 URL。低置信度图片可以降级为 gallery 或不进入核心章节。",
-      outputContract: '{"items":[至少1项{"placement":"cover|section|ending|gallery","description":"string","resourceId?":"只能引用输入中的resourceId","assetKey?":"只能引用输入中的assetKey","sectionIndex?":0到9整数,"visualRole?":"scene|people|award|detail|emotion|proof|brand","matchReason?":"string","confidence?":0到1数字,"captionHint?":"string"}]}',
+      systemPrompt: "在正文创作之前，根据 MaterialAnalysis 的图片语义、ContentPlan 的章节目的和 Outline 的图片槽位规划封面与章节图片。必须原样返回 ContentPlan 的 structureVersion；placement=section 时必须引用输入中存在的 sectionId，同时保留派生 sectionIndex。不要按上传顺序机械填充；必须按图片内容与章节叙事目的匹配。只引用输入中存在的 resourceId 或 Skill assetKey，不得虚构 URL。低置信度图片可以降级为 gallery 或不进入核心章节。",
+      outputContract: '{"structureVersion":"原样返回输入值","items":[至少1项{"placement":"cover|section|ending|gallery","description":"string","resourceId?":"只能引用输入中的resourceId","assetKey?":"只能引用输入中的assetKey","sectionId?":"section图片必须引用输入中的章节ID","sectionIndex?":0到9整数,"visualRole?":"scene|people|award|detail|emotion|proof|brand","matchReason?":"string","confidence?":0到1数字,"captionHint?":"string"}]}',
       input,
       schema: imagePlanSchema,
       temperature: 0.3
     }),
     createLayout: (input) => generate({
       agentName: "LayoutAgent",
-      systemPrompt: "根据当前主题、内容密度、已经确定的图片计划和 Skill 生成受控 LayoutPlan。版式只负责视觉呈现，不重新决定图片语义归属；image block 的 assetRef 应来自 ImagePlan，并保持对应 sectionIndex。只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
-      outputContract: '{"theme":"editorial|celebration|story|report|brand","palette":{"primary":"#RRGGBB","accent":"#RRGGBB","text":"#RRGGBB","surface":"#RRGGBB"},"titleTreatment":"centered|left-editorial|poster","introTreatment":"plain|quote|highlight-panel","sectionTreatment":"numbered|labelled|minimal|timeline","imageTreatment":"full-width|framed|gallery","blocks":[至少2项{"kind":"title|intro|section|image|quote|brand|cta","sectionIndex?":0到9整数,"assetRef?":"string"}]}',
+      systemPrompt: "根据当前主题、内容密度、已经确定的图片计划和 Skill 生成受控 LayoutPlan。必须原样返回 ContentPlan 的 structureVersion；section block 和章节 image block 必须引用输入中存在的 sectionId，并保留派生 sectionIndex。版式只负责视觉呈现，不重新决定图片语义归属；image block 的 assetRef 应来自 ImagePlan。只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
+      outputContract: '{"structureVersion":"原样返回输入值","theme":"editorial|celebration|story|report|brand","palette":{"primary":"#RRGGBB","accent":"#RRGGBB","text":"#RRGGBB","surface":"#RRGGBB"},"titleTreatment":"centered|left-editorial|poster","introTreatment":"plain|quote|highlight-panel","sectionTreatment":"numbered|labelled|minimal|timeline","imageTreatment":"full-width|framed|gallery","blocks":[至少2项{"kind":"title|intro|section|image|quote|brand|cta","sectionId?":"章节块必须引用输入中的章节ID","sectionIndex?":0到9整数,"assetRef?":"string"}]}',
       input,
       schema: layoutPlanSchema,
       temperature: 0.5
@@ -685,8 +707,8 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     reviseDraft: (input) => generate({
       agentName: "RevisionAgent",
-      systemPrompt: "只处理 ReviewReport 中 target=body/title/cta 的问题，保持已确认主题和未要求修改的章节。结构或主题问题不得用正文润色掩盖。",
-      outputContract: '{"title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
+      systemPrompt: "只处理 ReviewReport 中 target=body/title/cta 的问题，保持已确认主题和未要求修改的章节。必须原样返回 structureVersion，并按原顺序原样透传全部 sectionId；允许润色 heading，但不得新增、删除、交换或改写 sectionId。结构或主题问题不得用正文润色掩盖。",
+      outputContract: '{"structureVersion":"原样返回输入值","title":"string","subtitle?":"string","intro":"string","sections":[至少3项{"sectionId":"原样返回对应章节ID","heading":"string","purpose":"string","paragraphs":["string"],"assetRefs":["string"],"emphasis?":"string"}],"conclusion":"string","callToAction?":"string"}',
       input,
       schema: articleDraftSchema,
       temperature: 0.4

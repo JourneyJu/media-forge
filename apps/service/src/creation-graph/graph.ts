@@ -18,6 +18,17 @@ import {
   createCreationAgents,
   type CreationAgents
 } from "./agents";
+import {
+  assignContentPlanIdentity,
+  assertDraftStructure,
+  assertImagePlanStructure,
+  assertLayoutPlanStructure,
+  assertOutlineStructure,
+  normalizeDraftStructure,
+  normalizeImagePlanStructure,
+  normalizeLayoutPlanStructure,
+  normalizeOutlineStructure
+} from "./structure-guard";
 
 export interface GraphExecutionObserver {
   onNodeStarted?(nodeName: string, title: string): void | Promise<void>;
@@ -216,13 +227,13 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "planner",
     "内容策划",
     async (state) => ({
-      contentPlan: await agents.createContentPlan({
+      contentPlan: assignContentPlanIdentity(await agents.createContentPlan({
         userInput: state.userInput,
         brief: requireBrief(state),
         materials: requireMaterials(state),
         selectedSkills: state.selectedSkills,
         memory: state.memory
-      })
+      }), state.runId)
     }),
     (update) => `已完成 ${update.contentPlan?.sections.length ?? 0} 个章节的内容设计`
   );
@@ -269,14 +280,17 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     observer,
     "outline",
     "结构设计",
-    async (state) => ({
-      outline: await agents.createOutline({
+    async (state) => {
+      const contentPlan = requireContentPlan(state);
+      const outline = normalizeOutlineStructure(contentPlan, await agents.createOutline({
         brief: requireBrief(state),
-        contentPlan: requireContentPlan(state),
+        contentPlan,
         titles: requireTitles(state),
         selectedSkills: state.selectedSkills
-      })
-    }),
+      }));
+      assertOutlineStructure(contentPlan, outline);
+      return { outline };
+    },
     (update) => `已完成 ${update.outline?.sections.length ?? 0} 个章节的故事与商业结构`
   );
 
@@ -284,17 +298,20 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     observer,
     "writer",
     "正文创作",
-    async (state) => ({
-      draft: await agents.writeDraft({
+    async (state) => {
+      const contentPlan = requireContentPlan(state);
+      const draft = normalizeDraftStructure(contentPlan, await agents.writeDraft({
         brief: requireBrief(state),
-        contentPlan: requireContentPlan(state),
+        contentPlan,
         titles: requireTitles(state),
         outline: requireOutline(state),
         imagePlan: requireImagePlan(state),
         selectedSkills: state.selectedSkills,
         memory: state.memory
-      })
-    }),
+      }));
+      assertDraftStructure(contentPlan, draft);
+      return { draft };
+    },
     (update) => `已完成 ${update.draft?.sections.length ?? 0} 个正文章节`
   );
 
@@ -302,15 +319,18 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     observer,
     "image_plan",
     "配图规划",
-    async (state) => ({
-      imagePlan: await agents.planImages({
+    async (state) => {
+      const contentPlan = requireContentPlan(state);
+      const imagePlan = normalizeImagePlanStructure(contentPlan, await agents.planImages({
         brief: requireBrief(state),
-        contentPlan: requireContentPlan(state),
+        contentPlan,
         outline: requireOutline(state),
         materials: requireMaterials(state),
         selectedSkills: state.selectedSkills
-      })
-    }),
+      }));
+      assertImagePlanStructure(contentPlan, imagePlan);
+      return { imagePlan };
+    },
     (update) => `已规划 ${update.imagePlan?.items.length ?? 0} 个图片位置`
   );
 
@@ -318,15 +338,18 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     observer,
     "layout",
     "版式设计",
-    async (state) => ({
-      layoutPlan: await agents.createLayout({
+    async (state) => {
+      const contentPlan = requireContentPlan(state);
+      const layoutPlan = normalizeLayoutPlanStructure(contentPlan, await agents.createLayout({
         brief: requireBrief(state),
-        contentPlan: requireContentPlan(state),
+        contentPlan,
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
         selectedSkills: state.selectedSkills
-      })
-    }),
+      }));
+      assertLayoutPlanStructure(contentPlan, layoutPlan);
+      return { layoutPlan };
+    },
     (update) => `已生成 ${update.layoutPlan?.theme ?? ""} 主题版式`
   );
 
@@ -357,9 +380,10 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "revision",
     "内容修订",
     async (state) => {
-      const draft = await agents.reviseDraft({
+      const contentPlan = requireContentPlan(state);
+      const draft = normalizeDraftStructure(contentPlan, await agents.reviseDraft({
         brief: requireBrief(state),
-        contentPlan: requireContentPlan(state),
+        contentPlan,
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
         layoutPlan: requireLayoutPlan(state),
@@ -367,7 +391,8 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         report: state.reviewReports.at(-1)!,
         selectedSkills: state.selectedSkills,
         memory: state.memory
-      });
+      }));
+      assertDraftStructure(contentPlan, draft);
       return {
         draft: withSelectedTitle(draft, requireTitles(state)),
         revisionCount: state.revisionCount

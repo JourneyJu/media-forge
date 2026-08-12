@@ -107,6 +107,7 @@ export type TitleCandidate = z.infer<typeof titleCandidateSchema>;
 export type TitleCandidates = z.infer<typeof titleCandidatesSchema>;
 
 export const articleOutlineSectionSchema = z.object({
+  sectionId: z.string().trim().min(1),
   title: z.string().trim().min(1).max(100),
   objective: z.string().trim().min(1).max(300),
   storyBeat: z.string().trim().min(1).max(300),
@@ -120,6 +121,7 @@ export const imagePlacementSchema = z.enum(["cover", "section", "ending", "galle
 export const imageVisualRoleSchema = z.enum(["scene", "people", "award", "detail", "emotion", "proof", "brand"]);
 
 export const articleOutlineSchema = z.object({
+  structureVersion: z.string().trim().min(1),
   title: z.string().trim().min(1).max(64),
   subtitle: z.string().trim().max(100).optional(),
   openingHook: z.string().trim().min(1).max(300),
@@ -136,6 +138,7 @@ export const articleOutlineSchema = z.object({
 export type ArticleOutline = z.infer<typeof articleOutlineSchema>;
 
 export const contentPlanSchema = z.object({
+  structureVersion: z.string().trim().min(1),
   angle: z.string().trim().min(1).max(300),
   narrative: z.string().trim().min(1).max(500),
   requirements: z.array(z.object({
@@ -143,6 +146,7 @@ export const contentPlanSchema = z.object({
     evidence: z.string().trim().min(1).max(300)
   })).max(20),
   sections: z.array(z.object({
+    sectionId: z.string().trim().min(1),
     heading: z.string().trim().min(1).max(100),
     purpose: z.string().trim().min(1).max(300),
     keyPoints: z.array(z.string().trim().min(1).max(300)).min(1).max(8),
@@ -158,7 +162,14 @@ export const contentPlanSchema = z.object({
 
 export type ContentPlan = z.infer<typeof contentPlanSchema>;
 
+export const contentPlanInputSchema = contentPlanSchema.omit({ structureVersion: true }).extend({
+  sections: z.array(contentPlanSchema.shape.sections.element.omit({ sectionId: true })).min(3).max(10)
+});
+
+export type ContentPlanInput = z.infer<typeof contentPlanInputSchema>;
+
 export const articleDraftSectionSchema = z.object({
+  sectionId: z.string().trim().min(1),
   heading: z.string().trim().min(1).max(100),
   purpose: z.string().trim().min(1).max(300),
   paragraphs: z.array(z.string().trim().min(1).max(3000)).min(1).max(8),
@@ -167,6 +178,7 @@ export const articleDraftSectionSchema = z.object({
 });
 
 export const articleDraftSchema = z.object({
+  structureVersion: z.string().trim().min(1),
   title: z.string().trim().min(1).max(64),
   subtitle: z.string().trim().max(100).optional(),
   intro: z.string().trim().min(1).max(3000),
@@ -182,6 +194,7 @@ export const imagePlanItemSchema = z.object({
   description: z.string().trim().min(1).max(500),
   resourceId: z.string().trim().min(1).optional(),
   assetKey: z.string().trim().min(1).optional(),
+  sectionId: z.string().trim().min(1).optional(),
   sectionIndex: z.number().int().min(0).max(9).optional(),
   visualRole: imageVisualRoleSchema.optional(),
   matchReason: z.string().trim().min(1).max(500).optional(),
@@ -190,6 +203,7 @@ export const imagePlanItemSchema = z.object({
 });
 
 export const imagePlanSchema = z.object({
+  structureVersion: z.string().trim().min(1),
   items: z.array(imagePlanItemSchema).max(20)
 });
 
@@ -219,6 +233,7 @@ export type MaterialAnalysis = z.infer<typeof materialAnalysisSchema>;
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/u);
 
 export const layoutPlanSchema = z.object({
+  structureVersion: z.string().trim().min(1),
   theme: z.enum(["editorial", "celebration", "story", "report", "brand"]),
   palette: z.object({
     primary: hexColorSchema,
@@ -233,6 +248,7 @@ export const layoutPlanSchema = z.object({
   blocks: z.array(z.object({
     kind: z.enum(["title", "intro", "section", "image", "quote", "brand", "cta"]),
     sectionIndex: z.number().int().min(0).max(9).optional(),
+    sectionId: z.string().trim().min(1).optional(),
     assetRef: z.string().trim().min(1).optional()
   })).min(2).max(40)
 });

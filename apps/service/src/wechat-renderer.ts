@@ -10,6 +10,7 @@ import {
 const RENDERER_VERSION = "wechat-layout-plan-v2";
 
 const defaultLayout: LayoutPlan = {
+  structureVersion: "legacy",
   theme: "editorial",
   palette: { primary: "#16745B", accent: "#E7654B", text: "#20252B", surface: "#F7F8F6" },
   titleTreatment: "left-editorial",

@@ -40,6 +40,7 @@ export interface ArticleDocument {
   attrs: {
     title: string;
     scenario: string;
+    structureVersion?: string;
   };
   content: ArticleBlock[];
 }
@@ -65,7 +66,8 @@ export const articleDocumentSchema = z.object({
   type: z.literal("doc"),
   attrs: z.object({
     title: z.string().trim().min(1).max(200),
-    scenario: z.string().trim().min(1).max(80)
+    scenario: z.string().trim().min(1).max(80),
+    structureVersion: z.string().trim().min(1).optional()
   }),
   content: z.array(articleBlockSchema).min(1).max(100)
 }) satisfies z.ZodType<ArticleDocument>;
