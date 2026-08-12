@@ -894,12 +894,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 .workbench {
   height: calc(100dvh - 68px);
-  width: max(100%, 1558px);
-  min-width: 1558px;
+  width: max(100%, 1438px);
+  min-width: 1438px;
   min-height: 0;
   padding: 0 22px 0 0;
   display: grid;
-  grid-template-columns: 260px minmax(720px, 1fr) 520px;
+  grid-template-columns: 260px minmax(720px, 1fr) 400px;
   gap: 18px;
 }
 
@@ -911,9 +911,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 
 .workbench:has(.workspace-rail-collapsed) {
-  width: max(100%, 1370px);
-  min-width: 1370px;
-  grid-template-columns: 72px minmax(720px, 1fr) 520px;
+  width: max(100%, 1250px);
+  min-width: 1250px;
+  grid-template-columns: 72px minmax(720px, 1fr) 400px;
 }
 
 .panel,
@@ -2212,8 +2212,8 @@ select:focus {
 
 .preview-panel {
   margin-block: 22px;
-  width: 520px;
-  min-width: 520px;
+  width: 400px;
+  min-width: 400px;
   min-height: 0;
   padding: 18px;
   display: flex;
@@ -2228,7 +2228,7 @@ select:focus {
 .preview-toolbar,
 .compatibility {
   width: 100%;
-  max-width: 440px;
+  max-width: 364px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2278,8 +2278,23 @@ select:focus {
 }
 
 .phone-preview-container {
+  width: 328px;
+  min-width: 328px;
+  height: 691.2px;
+  min-height: 691.2px;
+}
+
+.phone-preview-stage {
+  width: 328px;
+  height: 691.2px;
+  overflow: hidden;
+}
+
+.phone-preview-scaler {
   width: 410px;
-  min-width: 410px;
+  height: 864px;
+  transform: scale(.8);
+  transform-origin: top left;
 }
 
 .phone {

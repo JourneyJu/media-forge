@@ -87,9 +87,13 @@ export function PhonePreview({ html, resolveResourceUrl }: PhonePreviewProps) {
   }, [html, resolveResourceUrl]);
 
   return (
-    <div className="phone" aria-label="公众号文章手机预览">
-      {error ? <p className="phone-preview-error" role="alert">{error}</p> : null}
-      <div ref={hostRef} className="phone-preview-surface" />
+    <div className="phone-preview-stage">
+      <div className="phone-preview-scaler">
+        <div className="phone" aria-label="公众号文章手机预览">
+          {error ? <p className="phone-preview-error" role="alert">{error}</p> : null}
+          <div ref={hostRef} className="phone-preview-surface" />
+        </div>
+      </div>
     </div>
   );
 }
