@@ -31,3 +31,4 @@ ADR 用于记录影响长期架构的决策。
 | `009-generation-and-model-usage-metering.md` | Proposed | 将用户生成事件与真实模型调用分离计量，支持用户和模型双维度统计。 |
 | `010-structured-content-and-layout-plan.md` | Accepted | 采用结构化正文、受控 LayoutPlan 和可信 Renderer，禁止生产 Demo 回退。 |
 | `011-safe-agent-reasoning-stream.md` | Proposed | 使用安全推理摘要和 RunEvent 展示 Agent 实时过程，禁止透传原始思维链。 |
+| `012-shadow-dom-artifact-preview.md` | Accepted | 使用固定三栏工作台和 Shadow DOM 安全渲染固定尺寸 Artifact 手机预览。 |

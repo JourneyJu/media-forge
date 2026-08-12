@@ -28,7 +28,20 @@ CreationPage
 └─ PreviewPanel
 ```
 
-页面整体不滚动；历史列表、消息列表和手机预览各自独立滚动。
+页面纵向不滚动；历史列表、消息列表和手机文章各自独立纵向滚动。桌面工作台保持固定三栏最小宽度，浏览器宽度不足时由工作台外层提供横向滚动，不压缩中间创作区或右侧手机预览。
+
+### 固定三栏与手机预览
+
+- 左侧历史栏宽度固定为 `260px`，折叠后为 `72px`。
+- 中间创作区最小宽度为 `720px`，宽屏时吸收剩余空间。
+- 右侧预览区固定为 `520px`，不得被 Grid 或 Flex 收缩。
+- 手机文章内容视口固定为 `390 × 844 CSS px`，不得使用 `dvh`、百分比、`scale()` 或 `zoom` 改变文章布局宽度。
+- `1280px` 等不足以容纳三栏的桌面分辨率下，工作台出现横向滚动，三栏保持原尺寸。
+- 当前桌面端 `980px` 单栏行为不再作为默认降级策略；移动端工作台另行设计。
+
+右侧手机预览不使用 iframe，也不建立独立 React 文章 Renderer。最终 Artifact HTML 经允许列表清洗、可信资源地址解析后挂载到原生 Shadow DOM。Shadow DOM 负责样式隔离，HTML 清洗器负责阻断脚本、事件属性、危险 URL 和不允许的节点，两者职责不能混用。
+
+预览清洗后的 DOM 只用于显示；源码和复制 HTML 始终读取原始 Artifact HTML。资源路径必须通过 DOM 节点遍历解析，不能使用正则表达式替换整段 HTML。完整规格见 `docs/specs/019-fixed-workbench-shadow-preview.md`，长期取舍见 `docs/adr/012-shadow-dom-artifact-preview.md`。
 
 ## 顶部栏
 
@@ -108,3 +121,5 @@ type ChatState = {
 - Resource API：`docs/api/assets.md`
 - 测试方案：`docs/testing/plans/chat-workspace.md`
 - 测试用例：`docs/testing/cases/chat-workspace.md`
+- 固定预览规格：`docs/specs/019-fixed-workbench-shadow-preview.md`
+- 预览渲染决策：`docs/adr/012-shadow-dom-artifact-preview.md`

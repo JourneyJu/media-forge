@@ -10,16 +10,6 @@ export interface PreviewAsset {
   dataUrl: string;
 }
 
-export function resolveWechatPreviewAssetUrls(
-  html: string,
-  resolveUrl: (path: string) => string
-): string {
-  return html.replace(
-    /src="(\/(?:resources|user-skills\/assets)\/[^"\s]+)"/gu,
-    (_match, path: string) => `src="${escapeHtml(resolveUrl(path))}"`
-  );
-}
-
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

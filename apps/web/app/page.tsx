@@ -38,8 +38,8 @@ import {
 import { getMe, logout } from "./lib/auth-api";
 import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
 import { disableUserSkill, importUserSkill, listUserSkills } from "./lib/user-skills-api";
-import { resolveWechatPreviewAssetUrls } from "./lib/wechat-preview";
 import { collectInheritedImageResourceIds } from "./lib/resource-inheritance";
+import { PhonePreview } from "./components/phone-preview";
 
 type PreviewMode = "preview" | "source";
 type UploadDraftStatus = "preparing" | "uploading" | "failed";
@@ -958,9 +958,6 @@ export default function HomePage() {
   const sendDisabled = busy || hasActiveUploads || isGenerating;
   const sendButtonWaiting = busy || hasActiveUploads || isGenerating;
   const html = result?.render.html ?? (runError ? createFailurePreviewHtml(runError) : starterHtml);
-  const previewHtml = result
-    ? resolveWechatPreviewAssetUrls(html, resolveResourceUrl)
-    : html;
   const warningCount = result?.render.warnings.length ?? 0;
 
   useEffect(() => {
@@ -1580,11 +1577,12 @@ export default function HomePage() {
         onImport={() => void handleImportSkill()}
       />
 
-      <section className="workbench">
-        <aside
-          className={`workspace-rail ${sidebarCollapsed ? "workspace-rail-collapsed" : ""}`}
-          aria-label="历史会话"
-        >
+      <div className="workbench-viewport">
+        <section className="workbench">
+          <aside
+            className={`workspace-rail ${sidebarCollapsed ? "workspace-rail-collapsed" : ""}`}
+            aria-label="历史会话"
+          >
           <button
             className="rail-collapse-button"
             type="button"
@@ -1761,9 +1759,9 @@ export default function HomePage() {
             <button className="copy-button" type="button" onClick={handleCopy}>复制 HTML</button>
           </div>
 
-          <div className={mode === "preview" ? "phone" : "source-view"}>
+          <div className={mode === "preview" ? "phone-preview-container" : "source-view"}>
             {mode === "preview" ? (
-              <iframe title="公众号文章预览" srcDoc={previewHtml} sandbox="" />
+              <PhonePreview html={html} resolveResourceUrl={resolveResourceUrl} />
             ) : (
               <textarea readOnly value={html} aria-label="微信公众号 HTML 源码" />
             )}
@@ -1775,8 +1773,9 @@ export default function HomePage() {
               {warningCount ? `${warningCount} 项兼容提示` : "微信兼容检查"}
             </span>
           </footer>
+          </section>
         </section>
-      </section>
+      </div>
     </main>
   );
 }
