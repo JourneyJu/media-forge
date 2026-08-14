@@ -12,7 +12,7 @@
 - 文章版本保存。
 - `content_json` 和 HTML 快照关联。
 - 历史版本恢复。
-- 微信兼容 HTML 快照和复制导出事件关联。
+- 微信兼容 HTML fragment 快照和复制导出事件关联。
 - 文章当前版本指针维护。
 
 ### 不负责
@@ -29,7 +29,7 @@
 | Article | 一篇公众号文章草稿，属于一个 Conversation。 |
 | ArticleVersion | 一次生成、修订、手动保存或恢复形成的正式版本。 |
 | ArticleDocument | 可编辑结构化内容，保存在 `article_versions.content_json`。 |
-| WeChatHtmlSnapshot | renderer 输出的微信兼容 HTML，不可变快照。 |
+| WeChatHtmlSnapshot | renderer 输出的微信兼容正文 HTML fragment，不可变快照，不是可导入的 `.html` 文件。 |
 | ExportEvent | 用户复制或导出动作记录，用于审计和用量统计。 |
 
 ## 文章结构
@@ -82,6 +82,23 @@
 → 更新 current_version_id
 ```
 
+### 公众号复制流程
+
+```text
+读取当前 ArticleVersion
+→ 获取或重新生成 WeChatHtmlSnapshot
+→ 校验兼容性 warning 和图片 URL
+→ web 从 ArticleDocument 生成 text/plain
+→ 用户点击后同时写入 text/html 与 text/plain
+→ 剪贴板写入成功后记录 ExportEvent
+```
+
+- `text/html` 必须是正文 fragment，使用保守标签和内联样式。
+- `text/plain` 是剪贴板降级格式，不包含 Markdown 样式标记。
+- 富文本复制与纯文本降级使用可区分的导出类型。
+- 标题、作者、摘要、封面和公众号平台设置不属于正文复制结果。
+- 图片沿用素材模块提供的 HTTPS URL；本模块不承担图片上传、代理或转存。
+
 ## 数据归属
 
 | 数据 | 归属 | 说明 |
@@ -110,6 +127,8 @@
 ## 风险
 
 - 微信后台会清洗 HTML，预览不能承诺等于最终发布效果。
+- 浏览器剪贴板能力和授权状态不一致，前端必须提供明确的纯文本降级路径。
+- 公网图片仍可能因防盗链、过期或微信抓取规则而丢失，必须保留 warning 并进行真实平台验收。
 - 保存版本时必须同时写入 `content_json` 和 HTML 快照 key，避免历史不可复现。
 - 视频块复制兼容性弱，第一版只能作为发布前提示和占位。
 - 文章与 Conversation 关系缺失会导致会话删除不完整，数据库必须使用外键约束。

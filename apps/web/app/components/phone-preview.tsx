@@ -82,7 +82,7 @@ export function PhonePreview({ html, resolveResourceUrl }: PhonePreviewProps) {
       setError("");
     } catch {
       host.shadowRoot?.replaceChildren();
-      setError("文章预览暂时无法显示，请切换到源码查看或复制 HTML。");
+      setError("文章预览暂时无法显示，请切换到源码查看或稍后重试复制。");
     }
   }, [html, resolveResourceUrl]);
 

@@ -39,10 +39,16 @@ import { getMe, logout } from "./lib/auth-api";
 import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
 import { disableUserSkill, importUserSkill, listUserSkills } from "./lib/user-skills-api";
 import { collectInheritedImageResourceIds } from "./lib/resource-inheritance";
+import {
+  articleDocumentToPlainText,
+  getWechatArticleStats,
+  writeWechatRichText
+} from "./lib/wechat-clipboard";
 import { PhonePreview } from "./components/phone-preview";
 
 type PreviewMode = "preview" | "source";
 type UploadDraftStatus = "preparing" | "uploading" | "failed";
+type CopyFeedback = { kind: "rich-success" | "plain-success" | "error"; message: string };
 
 type UploadDraft = {
   id: string;
@@ -941,6 +947,9 @@ export default function HomePage() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback | null>(null);
+  const [warningsExpanded, setWarningsExpanded] = useState(false);
   const [chat, dispatch] = useReducer(chatReducer, { messages: [], activeRunId: null });
   const assetInputRef = useRef<HTMLInputElement>(null);
   const lastRunEventNoRef = useRef(0);
@@ -959,6 +968,18 @@ export default function HomePage() {
   const sendButtonWaiting = busy || hasActiveUploads || isGenerating;
   const html = result?.render.html ?? (runError ? createFailurePreviewHtml(runError) : starterHtml);
   const warningCount = result?.render.warnings.length ?? 0;
+  const articleStats = getWechatArticleStats(result?.document);
+
+  useEffect(() => {
+    if (!copyFeedback) return;
+    const timeoutId = window.setTimeout(() => setCopyFeedback(null), copyFeedback.kind === "error" ? 6000 : 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [copyFeedback]);
+
+  useEffect(() => {
+    setWarningsExpanded(false);
+    setCopyFeedback(null);
+  }, [result?.versionId]);
 
   useEffect(() => {
     messageListRef.current?.scrollTo({
@@ -1134,7 +1155,7 @@ export default function HomePage() {
               type: "result_notice",
               runId,
               artifactId,
-              content: "已生成公众号预览，可以在右侧查看并复制 HTML。",
+              content: "已生成公众号预览，可以在右侧查看并复制到公众号。",
               createdAt: new Date().toISOString()
             }
           });
@@ -1401,12 +1422,29 @@ export default function HomePage() {
   }
 
   async function handleCopy() {
+    if (!result || copying) return;
+    setCopying(true);
+    setCopyFeedback(null);
     try {
-      await navigator.clipboard.writeText(html);
-      setStatus("HTML 已复制，可以粘贴到公众号后台");
+      await writeWechatRichText(html, articleDocumentToPlainText(result.document));
+      setCopyFeedback({ kind: "rich-success", message: "标题、摘要和封面需单独设置" });
     } catch {
-      setStatus("浏览器未允许复制，请切换源码后手动复制");
-      setMode("source");
+      setCopyFeedback({ kind: "error", message: "浏览器未允许复制公众号富文本" });
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  async function handleCopyPlainText() {
+    if (!result || copying) return;
+    setCopying(true);
+    try {
+      await navigator.clipboard.writeText(articleDocumentToPlainText(result.document));
+      setCopyFeedback({ kind: "plain-success", message: "排版样式和图片未包含" });
+    } catch {
+      setCopyFeedback({ kind: "error", message: "浏览器未允许复制，请检查剪贴板权限" });
+    } finally {
+      setCopying(false);
     }
   }
 
@@ -1756,7 +1794,14 @@ export default function HomePage() {
               <button className={mode === "preview" ? "active" : ""} onClick={() => setMode("preview")}>预览</button>
               <button className={mode === "source" ? "active" : ""} onClick={() => setMode("source")}>源码</button>
             </div>
-            <button className="copy-button" type="button" onClick={handleCopy}>复制 HTML</button>
+            <button
+              className="copy-button"
+              type="button"
+              onClick={handleCopy}
+              disabled={!result || copying}
+            >
+              {copying ? "复制中..." : "复制到公众号"}
+            </button>
           </div>
 
           <div className={mode === "preview" ? "phone-preview-container" : "source-view"}>
@@ -1768,11 +1813,55 @@ export default function HomePage() {
           </div>
 
           <footer className="compatibility">
-            <span>{result ? `Renderer ${result.render.rendererVersion}` : "等待生成"}</span>
-            <span className={warningCount ? "warning" : ""}>
-              {warningCount ? `${warningCount} 项兼容提示` : "微信兼容检查"}
-            </span>
+            <div className="compatibility-summary">
+              <span>{result ? `${articleStats.paragraphCount} 段 · ${articleStats.imageCount} 图` : "等待生成"}</span>
+              {warningCount ? (
+                <button
+                  className="warning"
+                  type="button"
+                  onClick={() => setWarningsExpanded((expanded) => !expanded)}
+                  aria-expanded={warningsExpanded}
+                >
+                  {warningCount} 项需处理 ›
+                </button>
+              ) : (
+                <span className={result ? "compatible" : ""}>{result ? "可复制" : "微信兼容检查"}</span>
+              )}
+            </div>
+            {warningsExpanded && result ? (
+              <ul className="compatibility-warnings" aria-label="兼容性问题">
+                {result.render.warnings.map((warning) => (
+                  <li key={`${warning.blockId}-${warning.code}`}>{warning.message}</li>
+                ))}
+              </ul>
+            ) : null}
+            <small>{result ? `Renderer ${result.render.rendererVersion}` : ""}</small>
           </footer>
+
+          {copyFeedback ? (
+            <div className={`copy-toast copy-toast-${copyFeedback.kind}`} role={copyFeedback.kind === "error" ? "alert" : "status"}>
+              <div>
+                <strong>
+                  {copyFeedback.kind === "rich-success"
+                    ? "正文已复制"
+                    : copyFeedback.kind === "plain-success" ? "纯文本已复制" : "复制失败"}
+                </strong>
+                <span>{copyFeedback.message}</span>
+              </div>
+              {copyFeedback.kind === "error" ? (
+                <button type="button" onClick={handleCopyPlainText} disabled={copying}>复制纯文本</button>
+              ) : null}
+              <button
+                className="copy-toast-close"
+                type="button"
+                onClick={() => setCopyFeedback(null)}
+                aria-label="关闭复制提示"
+                title="关闭"
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
           </section>
         </section>
       </div>

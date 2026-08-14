@@ -80,7 +80,11 @@
 
 ## `POST /articles/:articleId/render/wechat-html`
 
-对当前版本重新渲染微信 HTML。用于 renderer 修复或复制前检查。响应包含 `wechatHtml`、`rendererVersion` 和 `warnings`。
+对当前版本重新渲染微信兼容正文 HTML fragment。用于 renderer 修复或复制前检查。响应包含 `wechatHtml`、`rendererVersion` 和 `warnings`。
+
+`wechatHtml` 不得包含 `html`、`head`、`body`、外部样式表或脚本。该接口不返回剪贴板载荷，也不负责执行复制；web 使用返回的 fragment 和当前 `ArticleDocument`，在用户点击后分别构造 `text/html` 与 `text/plain`。
+
+第一阶段沿用此接口，不新增专用 clipboard API。图片只允许引用素材链路已有的 HTTPS 可访问 URL；图片 URL 不合规时通过现有 `warnings` 返回，不在该接口内代理或转存图片。
 
 ## `POST /articles/:articleId/export-events`
 
@@ -95,6 +99,8 @@
   "warnings": ["video_fallback"]
 }
 ```
+
+导出事件必须在剪贴板写入成功后提交。富文本复制使用 `copy_wechat_html`；纯文本降级需要使用契约中独立的导出类型，具体字段在实现前先更新 `packages/contracts/src/articles.ts`。剪贴板权限被拒绝、renderer 失败或复制调用失败时不得记录成功事件。
 
 ## 删除
 

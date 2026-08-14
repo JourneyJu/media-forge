@@ -2211,6 +2211,7 @@ select:focus {
 }
 
 .preview-panel {
+  position: relative;
   margin-block: 22px;
   width: 400px;
   min-width: 400px;
@@ -2270,11 +2271,17 @@ select:focus {
 }
 
 .copy-button {
+  min-width: 108px;
   padding: 9px 14px;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--mint), #2d9bf0);
   font-size: 13px;
   white-space: nowrap;
+}
+
+.copy-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .phone-preview-container {
@@ -2351,15 +2358,124 @@ select:focus {
 }
 
 .compatibility {
-  min-height: 36px;
+  min-height: 48px;
   margin-top: 8px;
+  flex-direction: column;
+  align-items: stretch;
   color: var(--muted);
   font-size: 11px;
 }
 
-.compatibility .warning {
+.compatibility-summary {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compatibility-summary button {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+}
+
+.compatibility-summary .warning {
   color: var(--warning);
   font-weight: 800;
+}
+
+.compatibility-summary .compatible {
+  color: var(--mint);
+  font-weight: 800;
+}
+
+.compatibility small {
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  font-size: 10px;
+}
+
+.compatibility-warnings {
+  margin: 2px 0 4px;
+  padding: 7px 9px 7px 24px;
+  border: 1px solid rgba(167, 91, 25, .18);
+  border-radius: 6px;
+  background: rgba(255, 248, 239, .8);
+  color: var(--warning);
+  line-height: 1.55;
+}
+
+.copy-toast {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 3;
+  width: 300px;
+  min-height: 66px;
+  padding: 13px 42px 13px 15px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(45, 55, 50, .16);
+}
+
+.copy-toast > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.copy-toast strong,
+.copy-toast span {
+  display: block;
+}
+
+.copy-toast strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.copy-toast span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.copy-toast-rich-success,
+.copy-toast-plain-success {
+  border-left: 4px solid var(--mint);
+}
+
+.copy-toast-error {
+  border-left: 4px solid var(--warning);
+}
+
+.copy-toast > button:not(.copy-toast-close) {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--mint);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--mint);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.copy-toast-close {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
 }
 
 .assistant-panel {

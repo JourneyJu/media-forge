@@ -265,7 +265,7 @@ export function createConversationStore(options: ConversationStoreOptions = {}) 
     if (run.resultArtifact) {
       appendAssistantVisibleMessage(
         run,
-        "公众号内容已经生成，我已同步刷新右侧手机预览。你可以继续在这里补充修改要求，也可以直接复制 HTML。"
+        "公众号内容已经生成，我已同步刷新右侧手机预览。你可以继续在这里补充修改要求，也可以直接复制到公众号。"
       );
       appendRunEvent(run.id, "artifact.created", {
         artifactId: run.resultArtifact.id,
