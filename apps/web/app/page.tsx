@@ -401,6 +401,7 @@ function formatConversationTime(value: string): string {
 type MessageListProps = {
   messages: ChatMessage[];
   resourcesById: Record<string, ResourceSummary>;
+  showThinking: boolean;
   onClarificationSubmit: (message: ClarificationChatMessage, answers: Record<string, string>) => Promise<void>;
 };
 
@@ -640,7 +641,7 @@ function AgentTaskCard({ message }: { message: TaskCardChatMessage }) {
   );
 }
 
-function MessageList({ messages, resourcesById, onClarificationSubmit }: MessageListProps) {
+function MessageList({ messages, resourcesById, showThinking, onClarificationSubmit }: MessageListProps) {
   if (messages.length === 0) {
     return (
       <div className="empty-chat">
@@ -689,6 +690,13 @@ function MessageList({ messages, resourcesById, onClarificationSubmit }: Message
           </article>
         );
       })}
+      {showThinking && (
+        <article className="message-bubble assistant-bubble" role="status" aria-live="polite">
+          <span>公众号 AI</span>
+          <p>正在思考</p>
+          <i aria-label="正在思考" />
+        </article>
+      )}
     </div>
   );
 }
@@ -966,6 +974,7 @@ export default function HomePage() {
   const isGenerating = Boolean(chat.activeRunId);
   const sendDisabled = busy || hasActiveUploads || isGenerating;
   const sendButtonWaiting = busy || hasActiveUploads || isGenerating;
+  const showThinking = (busy || isGenerating) && chat.messages.at(-1)?.type === "user";
   const html = result?.render.html ?? (runError ? createFailurePreviewHtml(runError) : starterHtml);
   const warningCount = result?.render.warnings.length ?? 0;
   const articleStats = getWechatArticleStats(result?.document);
@@ -986,7 +995,7 @@ export default function HomePage() {
       top: messageListRef.current.scrollHeight,
       behavior: "smooth"
     });
-  }, [chat.messages]);
+  }, [chat.messages, showThinking]);
 
   useEffect(() => {
     void refreshHistory();
@@ -1688,6 +1697,7 @@ export default function HomePage() {
               <MessageList
                 messages={chat.messages}
                 resourcesById={resourcesById}
+                showThinking={showThinking}
                 onClarificationSubmit={handleClarificationSubmit}
               />
             </div>
