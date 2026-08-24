@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { effectiveModelTimeoutMs, generateStructuredJsonWithGateway, readModelGatewayConfig } from "./model-gateway";
+import {
+  effectiveModelTimeoutMs,
+  generateSingleStructuredJsonWithGateway,
+  generateStructuredJsonWithGateway,
+  readModelGatewayConfig
+} from "./model-gateway";
 
 const originalEnv = { ...process.env };
 
@@ -225,5 +230,45 @@ describe("generateStructuredJsonWithGateway", () => {
       delta: "正在分析素材"
     }));
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ phase: "validating" }));
+  });
+});
+
+describe("generateSingleStructuredJsonWithGateway", () => {
+  it("uses one non-streaming request and validates the JSON response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(completion('{"activity":"analyze","subjects":["结构"]}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateSingleStructuredJsonWithGateway(config, {
+      systemPrompt: "Return safe JSON only.",
+      input: { excerpt: "正在分析结构" },
+      schema: z.object({
+        activity: z.literal("analyze"),
+        subjects: z.array(z.string())
+      })
+    });
+
+    expect(result).toEqual({ activity: "analyze", subjects: ["结构"] });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(request.stream).toBeUndefined();
+    expect(request.temperature).toBe(0);
+  });
+
+  it("honors an already aborted caller signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.signal?.aborted).toBe(true);
+      throw new DOMException("This operation was aborted", "AbortError");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateSingleStructuredJsonWithGateway(config, {
+      systemPrompt: "Return JSON only.",
+      input: { excerpt: "正在分析结构" },
+      schema: z.object({ activity: z.string() }),
+      signal: controller.signal
+    })).rejects.toThrow(/aborted/iu);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

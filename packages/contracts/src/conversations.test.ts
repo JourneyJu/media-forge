@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentReasoningSummaryPayloadSchema,
   agentProgressPayloadSchema,
   createConversationTurnRequestSchema,
   runEventTypeSchema,
@@ -57,6 +58,7 @@ describe("conversation lifecycle contracts", () => {
   });
 
   it("validates agent progress and heartbeat event contracts", () => {
+    expect(runEventTypeSchema.parse("agent.reasoning.summary")).toBe("agent.reasoning.summary");
     expect(runEventTypeSchema.parse("agent.reasoning.delta")).toBe("agent.reasoning.delta");
     expect(runEventTypeSchema.parse("run.heartbeat")).toBe("run.heartbeat");
     const progress = agentProgressPayloadSchema.parse({
@@ -73,5 +75,44 @@ describe("conversation lifecycle contracts", () => {
 
     expect(progress.sequence).toBe(2);
     expect(progress.delta).toBe("正在组织正文结构");
+  });
+});
+
+describe("agentReasoningSummaryPayloadSchema", () => {
+  const payload = {
+    runId: "run_1",
+    stepId: "content-planning",
+    agentName: "ContentPlannerAgent",
+    attemptNo: 1,
+    executionId: "execution-1",
+    sequence: 2,
+    revision: 1,
+    phase: "thinking" as const,
+    summary: "正在比较两种内容结构，重点检查章节衔接。",
+    category: "compare" as const,
+    source: "sidecar_summarizer" as const,
+    visibility: "active_step_only" as const,
+    elapsedMs: 1_500,
+    createdAt: "2026-08-24T08:00:00.000Z"
+  };
+
+  it("accepts a bounded transient reasoning summary", () => {
+    expect(agentReasoningSummaryPayloadSchema.parse(payload)).toEqual(payload);
+  });
+
+  it("rejects oversized or persistent summaries", () => {
+    expect(() =>
+      agentReasoningSummaryPayloadSchema.parse({
+        ...payload,
+        summary: "思".repeat(121)
+      })
+    ).toThrow();
+
+    expect(() =>
+      agentReasoningSummaryPayloadSchema.parse({
+        ...payload,
+        visibility: "persistent"
+      })
+    ).toThrow();
   });
 });

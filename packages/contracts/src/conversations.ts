@@ -39,6 +39,7 @@ export const runEventTypeSchema = z.enum([
   "agent.started",
   "agent.progress",
   "agent.reasoning.delta",
+  "agent.reasoning.summary",
   "agent.reasoning.completed",
   "agent.output.validating",
   "agent.retry.started",
@@ -78,6 +79,37 @@ export const agentProgressPayloadSchema = z.object({
 });
 export type AgentProgressPhase = z.infer<typeof agentProgressPhaseSchema>;
 export type AgentProgressPayload = z.infer<typeof agentProgressPayloadSchema>;
+
+export const agentReasoningSummaryCategorySchema = z.enum([
+  "analyze",
+  "compare",
+  "plan",
+  "check",
+  "revise"
+]);
+
+export const agentReasoningSummaryPayloadSchema = z.object({
+  runId: z.string().trim().min(1),
+  stepId: z.string().trim().min(1),
+  agentName: z.string().trim().min(1).max(80),
+  attemptNo: z.number().int().positive(),
+  executionId: z.string().trim().min(1).max(100),
+  sequence: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  phase: z.enum(["thinking", "generating"]),
+  summary: z.string().trim().min(1).max(120),
+  category: agentReasoningSummaryCategorySchema,
+  source: z.enum(["provider_summary", "sidecar_summarizer"]),
+  visibility: z.literal("active_step_only"),
+  elapsedMs: z.number().int().nonnegative(),
+  createdAt: z.string().datetime()
+});
+export type AgentReasoningSummaryCategory = z.infer<
+  typeof agentReasoningSummaryCategorySchema
+>;
+export type AgentReasoningSummaryPayload = z.infer<
+  typeof agentReasoningSummaryPayloadSchema
+>;
 
 export const createConversationRequestSchema = z.object({
   workspaceId: z.string().trim().min(1),
@@ -233,6 +265,8 @@ export interface TaskStepView {
   phase?: AgentProgressPhase;
   progressText?: string;
   reasoningSummary?: string;
+  reasoningRevision?: number;
+  reasoningExecutionId?: string;
   elapsedMs?: number;
   retryCount?: number;
   lastActivityAt?: string;

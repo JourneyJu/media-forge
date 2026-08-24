@@ -39,6 +39,7 @@ import { getMe, logout } from "./lib/auth-api";
 import { imageUploadLimits, isSupportedUploadImage, prepareImageForUpload, uploadFileSizeValid } from "./lib/image-upload";
 import { disableUserSkill, importUserSkill, listUserSkills } from "./lib/user-skills-api";
 import { collectInheritedImageResourceIds } from "./lib/resource-inheritance";
+import { applyAgentProgressUpdate } from "./lib/agent-progress-state";
 import {
   articleDocumentToPlainText,
   getWechatArticleStats,
@@ -79,6 +80,8 @@ type ChatAction =
       phase?: TaskStepView["phase"];
       delta?: string;
       summary?: string;
+      executionId?: string;
+      revision?: number;
       elapsedMs?: number;
       retryCount?: number;
       createdAt: string;
@@ -130,6 +133,7 @@ const runEventTypes: RunEventType[] = [
   "agent.started",
   "agent.progress",
   "agent.reasoning.delta",
+  "agent.reasoning.summary",
   "agent.reasoning.completed",
   "agent.output.validating",
   "agent.retry.started",
@@ -234,24 +238,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           ...message,
           steps: message.steps.map((step) => {
             if (step.id !== action.stepId) return step;
-            const nextReasoning = action.delta
-              ? `${step.reasoningSummary ?? ""}${action.delta}`.slice(-4000)
-              : step.reasoningSummary;
-            const status = action.eventType === "agent.failed"
-              ? "failed"
-              : action.eventType === "agent.completed"
-                ? "completed"
-                : step.status;
-            return {
-              ...step,
-              status,
-              ...(action.phase ? { phase: action.phase } : {}),
-              ...(action.summary ? { progressText: action.summary } : {}),
-              ...(nextReasoning ? { reasoningSummary: nextReasoning } : {}),
-              ...(action.elapsedMs !== undefined ? { elapsedMs: action.elapsedMs } : {}),
-              ...(action.retryCount !== undefined ? { retryCount: action.retryCount } : {}),
-              lastActivityAt: action.createdAt
-            };
+            return applyAgentProgressUpdate(step, action);
           })
         };
       })
@@ -589,6 +576,7 @@ function AgentTaskCard({ message }: { message: TaskCardChatMessage }) {
       const next = new Set(current);
       for (const step of message.steps) {
         if (step.status === "running" || step.status === "failed") next.add(step.id);
+        if (step.status === "completed") next.delete(step.id);
       }
       return next;
     });
@@ -626,6 +614,7 @@ function AgentTaskCard({ message }: { message: TaskCardChatMessage }) {
                   {step.summary && <p>{step.summary}</p>}
                   {stepExpanded && (step.progressText || step.reasoningSummary) && (
                     <div className="agent-progress" aria-live="polite">
+                      {step.reasoningSummary && <small className="agent-reasoning-label">分析动态 · 由系统实时整理</small>}
                       {step.progressText && <span>{step.progressText}</span>}
                       {step.reasoningSummary && <p>{step.reasoningSummary}</p>}
                       {(step.retryCount ?? 0) > 0 && <small>已自动修正 {step.retryCount} 次</small>}
@@ -1122,6 +1111,8 @@ export default function HomePage() {
             : {}),
           ...(getString(payload, "delta") ? { delta: getString(payload, "delta") } : {}),
           ...(getString(payload, "summary") ? { summary: getString(payload, "summary") } : {}),
+          ...(getString(payload, "executionId") ? { executionId: getString(payload, "executionId") } : {}),
+          ...(getNumber(payload, "revision") !== undefined ? { revision: getNumber(payload, "revision") } : {}),
           ...(getNumber(payload, "elapsedMs") !== undefined ? { elapsedMs: getNumber(payload, "elapsedMs") } : {}),
           ...(getNumber(payload, "retryCount") !== undefined ? { retryCount: getNumber(payload, "retryCount") } : {}),
           createdAt: getString(payload, "createdAt", new Date().toISOString())

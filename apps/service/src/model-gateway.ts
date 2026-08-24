@@ -224,6 +224,81 @@ export async function resolveModelGatewayConfig(routeKey: ModelRouteKey): Promis
   };
 }
 
+export async function generateSingleStructuredJsonWithGateway<T>(
+  config: ModelGatewayConfig,
+  options: {
+    systemPrompt: string;
+    input: unknown;
+    schema: z.ZodType<T>;
+    signal?: AbortSignal;
+    usage?: {
+      userId: string;
+      runId?: string;
+      modelConfigId: string;
+      routeKey: ModelRouteKey;
+      stepId?: string;
+      attemptNo?: number;
+    };
+  }
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const timeout = setTimeout(abort, config.timeoutMs);
+  const startedAt = Date.now();
+  let usageId: string | null = null;
+  try {
+    usageId = options.usage ? await adminConsole.startModelUsage(options.usage) : null;
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.apiKey}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: options.systemPrompt },
+          { role: "user", content: JSON.stringify(options.input) }
+        ]
+      }),
+      redirect: "error",
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`MODEL_GATEWAY_ERROR:${response.status}`);
+    const payload = await response.json() as ChatCompletionResponse;
+    const content = payload.choices?.[0]?.message?.content;
+    if (!content) throw new Error("MODEL_GATEWAY_INVALID_RESPONSE");
+    const result = options.schema.parse(JSON.parse(content));
+    if (usageId) {
+      await adminConsole.finishModelUsage(usageId, {
+        status: "succeeded",
+        inputTokens: payload.usage?.prompt_tokens,
+        outputTokens: payload.usage?.completion_tokens,
+        totalTokens: payload.usage?.total_tokens,
+        providerRequestId: payload.id,
+        latencyMs: Date.now() - startedAt
+      });
+    }
+    return result;
+  } catch (error) {
+    if (usageId) {
+      await adminConsole.finishModelUsage(usageId, {
+        status: "failed",
+        errorCode: error instanceof Error ? error.message.slice(0, 128) : "MODEL_GATEWAY_ERROR",
+        latencyMs: Date.now() - startedAt
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abort);
+  }
+}
+
 export async function generateDocumentWithGateway(
   input: GenerateWechatArticleRequest,
   config: ModelGatewayConfig,

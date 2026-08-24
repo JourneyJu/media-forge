@@ -264,3 +264,19 @@ POST /runs/:id/clarifications
 - 内容与排版质量重构：`docs/specs/015-multi-agent-content-and-layout-quality.md`
 - 结构化渲染决策：`docs/adr/010-structured-content-and-layout-plan.md`
 - 当前 L 级计划：`.plan/20260727-langgraph-multi-agent-production-completion.md`
+
+## Agent 分析动态旁路
+
+业务 Agent 的 `reasoning_content` 不属于业务事实源。Worker 只在当前 Agent
+执行期间将其保存在 8KB 有界内存窗口中；命中 Prompt、凭据、隐私、URL、路径、
+内部标识或结构化内容时整窗拒绝。符合资格的窗口通过现有
+`text_generation` 路由发起一次无重试、可取消的结构化摘要调用。
+
+摘要器不进入 LangGraph，不修改 Graph State，也不影响 AgentOutput、Artifact
+或 Run 终态。摘要输出只允许 `analyze`、`compare`、`plan`、`check`
+和 `revise`，且 subject 必须能在清洗后窗口中逐字找到。服务端模板生成最多
+120 字的进行时文案。
+
+每次 Agent 执行使用独立 `executionId`，并携带队列 `attemptNo`。完成、失败
+和重试会取消在途摘要并清空缓冲，旧执行的迟到结果被丢弃。功能默认关闭；关闭、
+超时、拒绝、预算或并发不足时继续使用确定性阶段动态。

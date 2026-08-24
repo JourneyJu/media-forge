@@ -218,3 +218,31 @@ Material 节点会对本轮图片调用 `multimodal_generation` 路由，结构�
 | `ARTIFACT_VALIDATION_FAILED` | 422 | Artifact Builder 发布前校验失败，错误摘要必须包含具体 violation code，例如 `TITLE_SOURCE_INVALID`。 |
 
 `TITLE_SOURCE_INVALID` 表示最终标题不是 Title Agent `selectedId` 指向的候选标题。该错误通常说明 Review 后的 Revision 改写了标题，或标题问题没有回退到 Title Agent 重新选择标题。Run 必须 failed，不得生成 `artifact.created` 或可发布预览。
+
+## Agent 分析动态事件
+
+`GET /runs/:id/events` 可返回完整替换语义的
+`agent.reasoning.summary`。该事件不包含供应商原始 reasoning：
+
+```json
+{
+  "runId": "run_1",
+  "stepId": "step_1",
+  "agentName": "WriterAgent",
+  "attemptNo": 1,
+  "executionId": "8d68b157-4c32-4d86-b0c4-8bf702c6f17d",
+  "sequence": 3,
+  "revision": 1,
+  "phase": "thinking",
+  "summary": "正在检查段落结构、主题关系。",
+  "category": "check",
+  "source": "sidecar_summarizer",
+  "visibility": "active_step_only",
+  "elapsedMs": 4200,
+  "createdAt": "2026-08-24T08:00:00.000Z"
+}
+```
+
+客户端必须按 `executionId` 隔离执行，并仅接受同一执行中递增的
+`revision`。收到 `agent.reasoning.completed` 或 `agent.completed` 后，
+应清除临时摘要；失败步骤可以保留最后一条已通过安全检查的摘要。

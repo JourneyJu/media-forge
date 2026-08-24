@@ -179,3 +179,13 @@ Writer Agent 抛错
 - 新 ContentPlan 与旧 Draft、ImagePlan 或 LayoutPlan 因缺少结构版本而混用。
 - Revision 擅自增删或换序章节，直到 Artifact 阶段才被发现。
 - 历史适配器通过标题相似度猜测章节，掩盖真实结构冲突。
+
+## 旁路摘要专项验证
+
+- 契约：摘要长度、受控 category、`active_step_only`、执行身份和修订号。
+- 输入安全：Prompt、凭据、隐私、URL、路径、UUID、代码和 JSON 命中后整窗拒绝。
+- 输出安全：严格 schema、subject 输入落地校验、服务端模板和 120 字上限。
+- 生命周期：完成、失败、重试和取消时清空内存并取消调用；迟到结果不得发布。
+- 降级：功能关闭、无 reasoning、超时、模型错误、Run 预算和并发上限均不影响主链路。
+- 前端：摘要按 revision 替换而非拼接，旧 execution 事件被忽略，完成自动收起，
+  失败保持展开。

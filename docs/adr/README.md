@@ -32,3 +32,5 @@ ADR 用于记录影响长期架构的决策。
 | `010-structured-content-and-layout-plan.md` | Accepted | 采用结构化正文、受控 LayoutPlan 和可信 Renderer，禁止生产 Demo 回退。 |
 | `011-safe-agent-reasoning-stream.md` | Proposed | 使用安全推理摘要和 RunEvent 展示 Agent 实时过程，禁止透传原始思维链。 |
 | `012-shadow-dom-artifact-preview.md` | Accepted | 使用固定三栏工作台和 Shadow DOM 安全渲染固定尺寸 Artifact 手机预览。 |
+| `013-stable-section-identity.md` | Accepted | 使用稳定章节身份和结构版本约束跨 Agent 内容引用。 |
+| `014-agent-reasoning-sidecar-summary.md` | Accepted | 使用非阻塞旁路摘要器生成受控分析动态，并在 Agent 完成后清除展示。 |

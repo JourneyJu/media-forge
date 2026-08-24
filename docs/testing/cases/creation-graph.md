@@ -211,7 +211,9 @@
 
 步骤：模拟模型连续返回多个 `reasoning_content` chunk 和最终结构化 `content`。
 
-期望：事件流按顺序产生 `agent.reasoning.delta`；最终 JSON 只在服务端组装并通过 schema 后成为 AgentOutput；浏览器收不到残缺 JSON。
+期望：功能关闭时产生确定性的 `agent.reasoning.delta`；功能启用且通过安全门禁时，
+产生完整替换的 `agent.reasoning.summary`；最终 JSON 只在服务端组装并通过
+schema 后成为 AgentOutput；浏览器收不到原始 reasoning 或残缺 JSON。
 
 ## CG-030 不支持 reasoning 的模型
 
@@ -310,3 +312,12 @@
 步骤：触发一个 `SECTION_SET_MISMATCH`。
 
 期望：后台日志包含 `runId`、节点、`structureVersion`、错误码和预期/实际 ID 集合，不包含完整 prompt、思维链、密钥或未脱敏正文；用户侧显示可理解的结构失败摘要。
+
+## CG-045 Agent 分析动态生命周期
+
+步骤：让同一 Agent 产生两次安全摘要，然后完成；随后模拟旧
+`executionId` 的迟到摘要，并分别覆盖失败和队列重试路径。
+
+期望：前端按 `revision` 替换摘要，不拼接原文；完成时清空并收起当前步骤；
+迟到摘要被忽略；失败步骤保留最后安全摘要；重试创建新 `executionId`；
+任一路径都不阻塞 AgentOutput 和 Run 终态。

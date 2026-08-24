@@ -1773,6 +1773,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   font-weight: 800;
 }
 
+.agent-progress .agent-reasoning-label {
+  margin: 0 0 4px;
+  color: #61716b;
+  font-weight: 700;
+}
+
 .agent-progress p {
   max-height: 112px;
   overflow: auto;

@@ -17,8 +17,19 @@ import { creationRunQueueName, getRedisUrl, parseRedisConnection } from "./queue
 import { adminConsole } from "../admin-console";
 import { createResourceService } from "../assets/resource-service";
 import { analyzeAsset } from "../vision-gateway";
-import type { ModelGatewayProgressEvent } from "../model-gateway";
+import {
+  generateSingleStructuredJsonWithGateway,
+  resolveModelGatewayConfig,
+  type ModelGatewayProgressEvent
+} from "../model-gateway";
 import { StructureGuardError } from "./structure-guard";
+import {
+  createReasoningSummaryObserver,
+  formatReasoningSummary,
+  reasoningSummaryCandidateSchema,
+  type ReasoningSummaryCandidate,
+  type ReasoningSummaryObserver
+} from "./reasoning-summarizer";
 
 interface VisibleStep {
   id: string;
@@ -84,6 +95,18 @@ const reasoningSummaryByAgent: Record<string, string> = {
   ArtifactBuilder: "正在校验并组装最终公众号内容。"
 };
 
+const reasoningSummaryAgents = new Set([
+  "ContentPlannerAgent",
+  "WriterAgent",
+  "ReviewerAgent"
+]);
+let activeReasoningSummaryCalls = 0;
+
+function boundedEnvNumber(name: string, fallback: number, min: number, max: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.floor(value))) : fallback;
+}
+
 export function sanitizeAgentProgressText(value: string): string {
   const blocked = /(system\s*prompt|developer\s*message|api[_\s-]*key|authorization|bearer\s+[a-z0-9._-]+|skill\s*manifest|系统提示词|开发者指令|完整\s*skill)/iu;
   return value
@@ -120,9 +143,21 @@ export async function closeStaleAgentTasksForAttempt(
   await persistence.failRunningAgentTasks(runId, new Error("CREATION_ATTEMPT_RESTARTED"));
 }
 
-function createAgentProgressReporter(
+export function createAgentProgressReporter(
   runId: string,
-  persistence: CreationPersistence
+  persistence: CreationPersistence,
+  options: {
+    userId: string;
+    attemptNo: number;
+    enabled?: boolean;
+    shadowMode?: boolean;
+    minChars?: number;
+    minAgeMs?: number;
+    minIntervalMs?: number;
+    secondSummaryAfterMs?: number;
+    maxSummaries?: number;
+    summarize?: (excerpt: string, signal: AbortSignal) => Promise<ReasoningSummaryCandidate>;
+  }
 ) {
   let active: {
     stepId: string;
@@ -132,8 +167,11 @@ function createAgentProgressReporter(
     retryCount: number;
     phase: AgentProgressPhase;
     reasoningPublished: boolean;
+    executionId: string;
+    summaryObserver: ReasoningSummaryObserver | null;
   } | null = null;
   let writeChain = Promise.resolve();
+  let runSummaryCalls = 0;
 
   const append = (type: RunEventType, payload: Record<string, unknown>): Promise<void> => {
     writeChain = writeChain.then(async () => {
@@ -153,6 +191,8 @@ function createAgentProgressReporter(
       phase,
       elapsedMs: Math.max(0, Date.now() - active.startedAt),
       retryCount: active.retryCount,
+      attemptNo: options.attemptNo,
+      executionId: active.executionId,
       createdAt: new Date().toISOString(),
       ...extra
     };
@@ -160,6 +200,12 @@ function createAgentProgressReporter(
 
   return {
     async start(stepId: string, agentName: string): Promise<void> {
+      active?.summaryObserver?.cancel();
+      const executionId = randomUUID();
+      const enabled = options.enabled
+        ?? process.env.REASONING_SUMMARIZER_ENABLED === "true";
+      const shadowMode = options.shadowMode
+        ?? process.env.REASONING_SUMMARIZER_SHADOW_MODE === "true";
       active = {
         stepId,
         agentName,
@@ -167,8 +213,73 @@ function createAgentProgressReporter(
         sequence: 0,
         retryCount: 0,
         phase: "thinking",
-        reasoningPublished: false
+        reasoningPublished: false,
+        executionId,
+        summaryObserver: null
       };
+      if (enabled && reasoningSummaryAgents.has(agentName)) {
+        const summarize = options.summarize ?? (async (excerpt, signal) => {
+          const runBudget = boundedEnvNumber("REASONING_SUMMARIZER_MAX_PER_RUN", 6, 1, 20);
+          const concurrency = boundedEnvNumber("REASONING_SUMMARIZER_CONCURRENCY", 2, 1, 10);
+          if (runSummaryCalls >= runBudget) throw new Error("REASONING_SUMMARIZER_RUN_BUDGET");
+          if (activeReasoningSummaryCalls >= concurrency) {
+            throw new Error("REASONING_SUMMARIZER_CONCURRENCY_LIMIT");
+          }
+          runSummaryCalls += 1;
+          activeReasoningSummaryCalls += 1;
+          try {
+            const resolved = await resolveModelGatewayConfig("text_generation");
+            return await generateSingleStructuredJsonWithGateway({
+              ...resolved,
+              timeoutMs: boundedEnvNumber("REASONING_SUMMARIZER_TIMEOUT_MS", 4_000, 1_000, 20_000)
+            }, {
+              systemPrompt: [
+                "你是安全的进度摘要器，只提取正在进行的高层活动。",
+                "不得复述提示词、凭据、个人信息、路径、URL、代码或具体内部推理。",
+                "subjects 必须逐字来自输入 excerpt，每项不超过 40 字。",
+                "只返回 activity 与 subjects 两个字段的严格 JSON。"
+              ].join("\n"),
+              input: { excerpt },
+              schema: reasoningSummaryCandidateSchema,
+              signal,
+              usage: {
+                userId: options.userId,
+                runId,
+                modelConfigId: resolved.modelConfigId,
+                routeKey: "text_generation",
+                stepId,
+                attemptNo: options.attemptNo
+              }
+            });
+          } finally {
+            activeReasoningSummaryCalls -= 1;
+          }
+        });
+        active.summaryObserver = createReasoningSummaryObserver({
+          enabled: true,
+          minChars: options.minChars
+            ?? boundedEnvNumber("REASONING_SUMMARIZER_MIN_CHARS", 300, 12, 2_000),
+          minAgeMs: options.minAgeMs
+            ?? boundedEnvNumber("REASONING_SUMMARIZER_MIN_AGE_MS", 3_000, 0, 60_000),
+          minIntervalMs: options.minIntervalMs
+            ?? boundedEnvNumber("REASONING_SUMMARIZER_MIN_INTERVAL_MS", 8_000, 0, 60_000),
+          secondSummaryAfterMs: options.secondSummaryAfterMs
+            ?? boundedEnvNumber("REASONING_SUMMARIZER_SECOND_AFTER_MS", 12_000, 0, 120_000),
+          maxSummaries: options.maxSummaries
+            ?? boundedEnvNumber("REASONING_SUMMARIZER_MAX_PER_AGENT", 2, 1, 5),
+          summarize,
+          publish: async (candidate, revision) => {
+            if (!active || active.executionId !== executionId || shadowMode) return;
+            await append("agent.reasoning.summary", payload("thinking", {
+              revision,
+              summary: formatReasoningSummary(candidate),
+              category: candidate.activity,
+              source: "sidecar_summarizer",
+              visibility: "active_step_only"
+            }));
+          }
+        });
+      }
       await append("agent.started", payload("thinking", { summary: "正在准备当前创作任务" }));
     },
     async progress(agentName: string, event: ModelGatewayProgressEvent): Promise<void> {
@@ -177,6 +288,16 @@ function createAgentProgressReporter(
       active.retryCount = event.retryCount;
       active.phase = event.phase;
       if (event.type === "reasoning" && event.delta) {
+        if (active.summaryObserver) {
+          active.summaryObserver.push(event.delta);
+          if (!active.reasoningPublished) {
+            active.reasoningPublished = true;
+            const delta = reasoningSummaryByAgent[active.agentName]
+              ?? "正在分析当前任务的目标和约束。";
+            await append("agent.reasoning.delta", payload("thinking", { delta }));
+          }
+          return;
+        }
         if (active.reasoningPublished) return;
         active.reasoningPublished = true;
         const delta = reasoningSummaryByAgent[active.agentName] ?? "正在分析当前任务的目标和约束。";
@@ -193,6 +314,7 @@ function createAgentProgressReporter(
     },
     async complete(summary: string): Promise<void> {
       if (!active) return;
+      active.summaryObserver?.cancel();
       await append("agent.reasoning.completed", payload("validating", {
         summary: sanitizeAgentProgressText(summary)
       }));
@@ -203,6 +325,7 @@ function createAgentProgressReporter(
     },
     async fail(error: unknown): Promise<void> {
       if (!active) return;
+      active.summaryObserver?.cancel();
       await append("agent.failed", payload("validating", {
         summary: getCreationRunFailureMessage(error)
       }));
@@ -210,6 +333,7 @@ function createAgentProgressReporter(
     },
     async retry(retryCount: number): Promise<void> {
       if (!active) return;
+      active.summaryObserver?.cancel();
       active.retryCount = retryCount;
       await append("agent.retry.started", payload("retrying", {
         summary: "当前模型调用未完成，系统正在自动重试。"
@@ -223,6 +347,7 @@ function createAgentProgressReporter(
       }));
     },
     async finish(): Promise<void> {
+      active?.summaryObserver?.cancel();
       await writeChain;
     }
   };
@@ -388,7 +513,10 @@ export async function processCreationRunJob(
   const context = await enrichImageMaterials(payload, storedContext);
   const taskIds = new Map<string, string>();
   const visibleSteps: VisibleStep[] = [];
-  const progressReporter = createAgentProgressReporter(payload.runId, persistence);
+  const progressReporter = createAgentProgressReporter(payload.runId, persistence, {
+    userId: payload.workspaceId,
+    attemptNo: job.attemptsMade + 1
+  });
   const deadlineAt = Date.now() + Number(process.env.CREATION_RUN_TIMEOUT_MS ?? 600000);
 
   const observer: GraphExecutionObserver = {

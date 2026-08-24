@@ -1,8 +1,10 @@
 import { Readable } from "node:stream";
 import type { CreationRunContext, CreationRunJob } from "@mediaforge/contracts";
+import type { CreationPersistence } from "./persistence";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeStaleAgentTasksForAttempt,
+  createAgentProgressReporter,
   enrichImageMaterials,
   getCreationRunFailureMessage,
   sanitizeAgentProgressText,
@@ -159,5 +161,50 @@ describe("agent progress safety", () => {
     await closeStaleAgentTasksForAttempt({ failRunningAgentTasks }, "run_1", 0);
 
     expect(failRunningAgentTasks).not.toHaveBeenCalled();
+  });
+
+  it("publishes a grounded summary without persisting raw reasoning", async () => {
+    const appendEvent = vi.fn(async () => undefined);
+    const reporter = createAgentProgressReporter(
+      "run_1",
+      { appendEvent } as unknown as CreationPersistence,
+      {
+        userId: "user_1",
+        attemptNo: 2,
+        enabled: true,
+        minChars: 12,
+        minAgeMs: 0,
+        minIntervalMs: 0,
+        secondSummaryAfterMs: 0,
+        maxSummaries: 1,
+        summarize: vi.fn(async () => ({
+          activity: "compare" as const,
+          subjects: ["文章结构"]
+        }))
+      }
+    );
+
+    await reporter.start("step_1", "ContentPlannerAgent");
+    await reporter.progress("ContentPlannerAgent", {
+      type: "reasoning",
+      phase: "thinking",
+      delta: "正在比较文章结构与读者阅读节奏，这段原始内容不应进入事件。",
+      retryCount: 0
+    });
+    await vi.waitFor(() => {
+      expect(appendEvent).toHaveBeenCalledWith(
+        "run_1",
+        "agent.reasoning.summary",
+        expect.objectContaining({
+          attemptNo: 2,
+          revision: 1,
+          summary: "正在比较文章结构。",
+          visibility: "active_step_only"
+        })
+      );
+    });
+    expect(JSON.stringify(appendEvent.mock.calls)).not.toContain("这段原始内容不应进入事件");
+    await reporter.complete("内容结构已完成");
+    await reporter.finish();
   });
 });
