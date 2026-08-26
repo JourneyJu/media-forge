@@ -1146,6 +1146,14 @@ export default function HomePage() {
 
       if (type === "run.completed") {
         const artifactId = getString(payload, "artifactId");
+        const qualityWarning = getString(payload, "qualityStatus") === "warning";
+        const unresolvedIssues = Array.isArray(payload.unresolvedIssues)
+          ? payload.unresolvedIssues
+            .map((issue) => issue && typeof issue === "object" && "instruction" in issue
+              ? getString(issue as Record<string, unknown>, "instruction")
+              : "")
+            .filter(Boolean)
+          : [];
         if (artifactId) loadArtifact(artifactId);
         if (artifactId) {
           dispatch({
@@ -1155,12 +1163,14 @@ export default function HomePage() {
               type: "result_notice",
               runId,
               artifactId,
-              content: "已生成公众号预览，可以在右侧查看并复制到公众号。",
+              content: qualityWarning
+                ? `已达到最大审校次数，已输出最后一版结果，请人工确认。${unresolvedIssues.length ? ` 待处理：${unresolvedIssues.join("；")}` : ""}`
+                : "已生成公众号预览，可以在右侧查看并复制到公众号。",
               createdAt: new Date().toISOString()
             }
           });
         }
-        setStatus("创作完成");
+        setStatus(qualityWarning ? "创作完成（有质量提醒）" : "创作完成");
         setRunError("");
         dispatch({ type: "run_finished", runId });
         setBusy(false);

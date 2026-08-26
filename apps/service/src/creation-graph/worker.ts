@@ -609,6 +609,14 @@ export async function processCreationRunJob(
       process.env.MODEL_MODE === "demo" ? "local-demo" : "gateway",
       result.layoutPlan
     );
+    if (result.qualityStatus && result.completionReason) {
+      response.quality = {
+        status: result.qualityStatus,
+        completionReason: result.completionReason,
+        reviewPassed: result.qualityStatus === "passed",
+        unresolvedIssues: result.unresolvedIssues ?? []
+      };
+    }
     const artifact = await persistence.saveArtifact(payload.conversationId, payload.runId, response);
     await persistence.updateConversationMemoryFromGraphResult(
       payload.conversationId,
@@ -619,19 +627,27 @@ export async function processCreationRunJob(
     await persistence.appendEvent(payload.runId, "artifact.created", {
       artifactId: artifact.id,
       artifactType: artifact.type,
-      title: artifact.title
+      title: artifact.title,
+      qualityStatus: result.qualityStatus,
+      completionReason: result.completionReason,
+      unresolvedIssueCount: result.unresolvedIssues?.length ?? 0
     });
     await appendAssistantMessage(
       persistence,
       payload.runId,
       payload.conversationId,
-      `标题、正文、配图规划和质量审校都已完成。推荐标题是《${artifact.title}》，右侧手机预览已经更新。`
+      result.qualityStatus === "warning"
+        ? `已达到最大审校次数，已输出最后一版《${artifact.title}》。请根据质量提醒人工确认后再发布。`
+        : `标题、正文、配图规划和质量审校都已完成。推荐标题是《${artifact.title}》，右侧手机预览已经更新。`
     );
     await persistence.updateRun(payload.runId, "completed", "artifact");
     await appendTaskCard(persistence, payload.runId, visibleSteps, "completed", true);
     await persistence.appendEvent(payload.runId, "run.completed", {
       status: "completed",
-      artifactId: artifact.id
+      artifactId: artifact.id,
+      qualityStatus: result.qualityStatus,
+      completionReason: result.completionReason,
+      unresolvedIssues: result.unresolvedIssues ?? []
     });
     await adminConsole.finishGeneration(payload.runId, "completed");
     return result;

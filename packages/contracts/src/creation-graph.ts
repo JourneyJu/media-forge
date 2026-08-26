@@ -287,8 +287,15 @@ export const artifactValidationResultSchema = z.object({
   })).max(30)
 });
 
+export type ReviewIssue = z.infer<typeof reviewIssueSchema>;
 export type ReviewReport = z.infer<typeof reviewReportSchema>;
 export type ArtifactValidationResult = z.infer<typeof artifactValidationResultSchema>;
+
+export const qualityStatusSchema = z.enum(["passed", "warning"]);
+export const completionReasonSchema = z.enum(["review_passed", "max_revision_reached"]);
+
+export type QualityStatus = z.infer<typeof qualityStatusSchema>;
+export type CompletionReason = z.infer<typeof completionReasonSchema>;
 
 export const conversationMaterialSummarySchema = z.object({
   resourceId: z.string().trim().min(1),
@@ -465,6 +472,9 @@ export interface CreationGraphState {
   artifactValidation?: ArtifactValidationResult;
   finalDocument?: ArticleDocument;
   artifactId?: string;
+  qualityStatus?: QualityStatus;
+  completionReason?: CompletionReason;
+  unresolvedIssues?: ReviewReport["issues"];
   revisionCount: number;
   maxRevisionCount: number;
   status: CreationGraphStatus;

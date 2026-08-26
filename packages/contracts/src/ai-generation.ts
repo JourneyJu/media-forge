@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ArticleDocument, WechatRenderResult } from "./articles";
-import type { LayoutPlan } from "./creation-graph";
+import type { CompletionReason, LayoutPlan, QualityStatus, ReviewIssue } from "./creation-graph";
 
 export const articleToneSchema = z.enum(["friendly", "professional", "lively", "warm"]);
 export const articleStyleSchema = z.enum(["practical", "story", "list", "promotion"]);
@@ -60,5 +60,11 @@ export interface GenerateWechatArticleResponse {
     provider: string;
     name: string;
     mode: "gateway" | "local-demo";
+  };
+  quality?: {
+    status: QualityStatus;
+    completionReason: CompletionReason;
+    reviewPassed: boolean;
+    unresolvedIssues: ReviewIssue[];
   };
 }

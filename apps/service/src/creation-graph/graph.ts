@@ -176,7 +176,7 @@ function routeAfterReview(
 ): "brief_node" | "planner_node" | "title_node" | "revision_node" | "image_plan_node" | "layout_node" | "artifact_node" | "fail_node" {
   const report = state.reviewReports.at(-1);
   if (report?.passed) return "artifact_node";
-  if (state.revisionCount >= state.maxRevisionCount) return "fail_node";
+  if (state.revisionCount >= state.maxRevisionCount) return "artifact_node";
   const targets = new Set(report?.issues.filter((issue) => issue.severity === "error").map((issue) => issue.target));
   if (targets.has("brief")) return "brief_node";
   if (targets.has("plan") || targets.has("outline")) return "planner_node";
@@ -420,6 +420,13 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
       return {
         finalDocument: result.document,
         artifactValidation: result.validation,
+        qualityStatus: state.reviewReports.at(-1)?.passed ? "passed" : "warning",
+        completionReason: state.reviewReports.at(-1)?.passed
+          ? "review_passed"
+          : "max_revision_reached",
+        unresolvedIssues: state.reviewReports.at(-1)?.passed
+          ? []
+          : state.reviewReports.at(-1)?.issues ?? [],
         status: "completed"
       };
     },

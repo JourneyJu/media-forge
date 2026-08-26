@@ -370,6 +370,32 @@ describe("wechat article creation graph", () => {
     expect(result.artifactValidation?.passed).toBe(true);
   });
 
+  it("outputs the last draft with a quality warning when review reaches its limit", async () => {
+    const demoAgents = createDemoCreationAgents();
+    const issues: ReviewReport["issues"] = [{
+      code: "BODY_NEEDS_POLISH",
+      severity: "error",
+      target: "body",
+      instruction: "补充更具体的现场细节。"
+    }];
+    const result = await runWechatArticleGraph({
+      ...baseState("主题是小兰花获奖，面向舞蹈学员家长，写一篇公众号文章。"),
+      maxRevisionCount: 1
+    }, {
+      agents: {
+        ...demoAgents,
+        async reviewDraft() {
+          return reviewReport(false, issues);
+        }
+      }
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.finalDocument).toBeDefined();
+    expect(result.qualityStatus).toBe("warning");
+    expect(result.completionReason).toBe("max_revision_reached");
+    expect(result.unresolvedIssues).toEqual(issues);
+  });
   it("routes title review issues back to Title Agent instead of Revision", async () => {
     const demoAgents = createDemoCreationAgents();
     let titleCount = 0;

@@ -61,6 +61,7 @@
 - 5 秒无有效进度时发送 heartbeat，终态后停止。
 - 首个增量慢、单 Agent 超时、Run 超时和 Worker 中断都产生明确失败或恢复结果。
 - 同一个 Run 只能产生一个业务终态。
+- Review 未通过但达到修订上限时，验证最后草稿的 Artifact、warning 完成事件、未解决问题提示以及 Artifact Builder 失败仍为真正失败。
 
 ## 关键场景
 

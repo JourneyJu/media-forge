@@ -193,11 +193,11 @@
 
 期望：Graph 分别回退 Brief、Planner/Writer、ImagePlan 和 Layout；不得把所有问题统一交给正文 Revision。
 
-## CG-027 Review 未通过不创建 Artifact
+## CG-027 Review 达到上限输出最后草稿
 
-步骤：Reviewer 两轮后仍报告主题污染或要求覆盖不足。
+步骤：Reviewer 连续未通过并达到最大修订次数。
 
-期望：Run failed，不产生 `artifact.created`，不存在新的 ArticleVersion。
+期望：Graph 使用最后一次 `draft` 进入 Artifact Builder；结构校验通过时依次产生 `artifact.created` 和带 `qualityStatus=warning`、`completionReason=max_revision_reached`、`unresolvedIssues` 的 `run.completed`。前端加载预览并显示人工确认提醒；Artifact Builder 失败时才产生 `run.failed`。
 
 ## CG-028 Skill 贯穿全部阶段
 

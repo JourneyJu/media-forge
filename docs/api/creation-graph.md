@@ -6,7 +6,7 @@
 
 目标实现见 `docs/specs/006-langgraph-multi-agent-production-completion.md`。
 
-`docs/specs/015-multi-agent-content-and-layout-quality.md` 已确认新的 Turn 上下文、结构化正文和 LayoutPlan 目标契约，但共享 contracts 尚未实施。本节中的目标字段在 contracts 合入前不得视为可调用 API。
+`docs/specs/015-multi-agent-content-and-layout-quality.md` 的 Turn 上下文、结构化正文和 LayoutPlan 契约已落地。审校达到最大修订次数时，`run.completed` 可携带可选的 `qualityStatus=warning`、`completionReason=max_revision_reached` 和 `unresolvedIssues`，历史客户端可以忽略这些字段。
 
 ## 定位
 

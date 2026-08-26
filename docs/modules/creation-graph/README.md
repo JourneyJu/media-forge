@@ -251,7 +251,7 @@ POST /runs/:id/clarifications
 - 最终标题始终来自 Title Agent `selectedId`；Revision 不得在非标题问题中改写标题。
 - 新主题不继承旧主题、旧素材或旧 LayoutPlan。
 - 生产模型不可用时明确失败，不返回 Demo 文章。
-- Reviewer 未通过时不创建 Artifact，并回退到对应问题节点。
+- Reviewer 未通过且未达到上限时回退到对应问题节点；达到上限时，如最后草稿能通过 Artifact Builder 安全校验，仍创建 Artifact 并以 `qualityStatus=warning`、`completionReason=max_revision_reached` 完成 Run。
 - 模型长调用期间持续产生安全进度或 heartbeat，不出现无反馈等待。
 - 所有异常路径产生唯一 Run 终态，不静默结束。
 
