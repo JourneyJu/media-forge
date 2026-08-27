@@ -77,6 +77,9 @@ const GraphAnnotation = Annotation.Root({
   artifactValidation: Annotation<ArtifactValidationResult | undefined>(),
   finalDocument: Annotation<CreationGraphState["finalDocument"] | undefined>(),
   artifactId: Annotation<string | undefined>(),
+  qualityStatus: Annotation<CreationGraphState["qualityStatus"] | undefined>(),
+  completionReason: Annotation<CreationGraphState["completionReason"] | undefined>(),
+  unresolvedIssues: Annotation<CreationGraphState["unresolvedIssues"] | undefined>(),
   revisionCount: Annotation<number>({
     reducer: (_current, update) => update,
     default: () => 0
