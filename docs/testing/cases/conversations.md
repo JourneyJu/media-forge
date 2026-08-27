@@ -34,3 +34,11 @@
 | CONV-030 | 明确切换新主题 | 同一 Conversation 中发送“新主题：写一篇暑期招生公众号文章” | IntentResolver 判定 `sameTopic=false` 且 `mode=new`；RunContext 清空旧主题 brief/outline/draft summary，不继承旧主题文本。 |
 | CONV-031 | 无历史短指令需追问 | 新 Conversation 首条消息只有“重新生成”或“继续” | IntentResolver 判定 `mode=clarify` 或进入 clarification；系统不生成“未指定主题”的泛化文章。 |
 | CONV-032 | 追问补充时添加图片 | Run 进入 `waiting_clarification` 后，用户上传图片并提交追问答案 | 图片从 staged 变为 attached，追问消息带 `resourceIds`，恢复后的 `graph_runs.context_json.resourceContext.currentResourceIds` 和 `materialSummary` 包含新增图片。 |
+| CONV-033 | 新完整提示词覆盖历史 | 已有成功文章的同一 Conversation 输入另一组完整、自洽的公众号需求并使用 `creationMode=auto` | `resolvedRequest.operation=new`，V2 memory 不包含旧主题，当前指令只出现一次，不继承旧 Artifact 或旧资源。 |
+| CONV-034 | 失败后输入新需求 | 上一 Run 失败后输入另一组完整创作需求 | 新 Run 建立新的 `ResolvedCreationRequest`，`lastAttempt` 不覆盖新需求，Brief 不读取失败请求的主题。 |
+| CONV-035 | 失败后明确重试 | 上一 Run 失败后只发送“重试” | 新 Run 复用 `lastAttempt.resolvedRequest` 和原资源边界；失败尝试仍不替换 `successfulBaseline`。 |
+| CONV-036 | 仅呈现修订 | 已有带 `creationSnapshot` 的 Artifact，用户发送“保留内容，只把主色改为深蓝” | 解析为 `revise` 且 mutation scope 仅为 `presentation`，RunContext 携带 baseSnapshot。 |
+| CONV-037 | 旧 Artifact 局部修订兼容 | 上一版 Artifact 没有 `creationSnapshot`，用户请求只改颜色 | V2 局部执行不开启，Run 安全走完整 V1 兼容路径，不因缺少快照立即失败。 |
+| CONV-038 | 歧义请求追问 | 已有文章时发送“换一个感觉”且没有更多约束 | 解析为 `clarify` 并进入 `waiting_clarification`，不猜测正文或呈现范围。 |
+| CONV-039 | V2 shadow 不改变执行 | 设置 `CREATION_CONTEXT_V2_MODE=shadow` 创建后续 Run | context 可保留 shadow 解析结果，但 Worker 仍执行 V1，上线观测不改变用户产物。 |
+| CONV-040 | 记忆并发保护 | contextVersion 较小的慢 Run 在较新 Run 后完成 | 条件 upsert 拒绝旧版本覆盖，`successfulBaseline` 和 `lastAttempt` 保持较新状态。 |

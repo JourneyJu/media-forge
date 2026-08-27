@@ -237,3 +237,27 @@ Writer Agent 抛错
 - 记录 prompt/schema version、模型配置、耗时、token、来源、theme、colorSource 和回退次数。
 - 安全摘要能够说明用户颜色与内容推断的组合，不暴露完整 prompt 或 Skill。
 - 新增调用受 Run deadline、取消、队列重试和唯一终态约束。
+
+## 规范化请求与分层校验专项验证（规格 024）
+
+### Golden 请求矩阵
+
+- 在有成功历史、有失败历史和无历史三种状态下，覆盖完整新需求、继续、重试、正文修订、仅呈现修订和歧义请求。
+- 完整新需求始终解析为 `new`，当前指令只注入一次，旧主题、旧正文和旧资源不进入执行请求。
+- 明确仅改颜色、装饰、视觉、图片展示或品牌呈现时，mutation scope 只包含 `presentation`。
+- 歧义请求进入 clarification，不以低置信度猜测执行。
+- 重试复用冻结的失败请求；同一提示词和快照可以复现相同的 request hash 与执行边界。
+
+### 局部执行不变量
+
+- `creationSnapshot` 包含恢复 Presentation 路径所需的 Brief、ContentPlan、标题、提纲、正文和 ImagePlan。
+- 仅呈现修订从 Presentation 开始，不调用 Brief、Planner、Title、Outline、Writer 或 ImagePlan。
+- Artifact 前逐项比较标题、正文、章节顺序、`sectionId`、`structureVersion` 和图片语义；越界修改以 `MUTATION_SCOPE_VIOLATION` 失败。
+- 旧 Artifact 无快照时不伪造基线，不进入局部路径。
+
+### 语义与完整性分层
+
+- Reviewer 对 `contentIdentity` 的实体、事实、观点和逐字要求返回 evidence、status 和 confidence。
+- 创意主题或 subject 没有逐字出现只记录 `LEGACY_SUBJECT_MISMATCH` 诊断，不阻断 Artifact。
+- `mustIncludeVerbatim` 缺失、标题来源错误、结构版本漂移和 mutation scope 越界仍为确定性硬失败。
+- provider、quality、integrity 和 system 失败生成不同 `CreationFailureEnvelope`，并映射正确 recoverability。

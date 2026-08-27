@@ -39,7 +39,8 @@
 - 第一轮生成完成后，Working Memory 写入 brief、标题、提纲摘要、正文摘要和 `lastArtifactId`。
 - 后续 RunContext 使用模型辅助 `instructionMemory = 结构化 rebuiltContext + 最近 1 到 2 条有价值用户输入原文`，前端消息历史保持完整展示。
 - 用户只发送“继续任务”等短指令时，RunContext 仍保留前序长 prompt 的有价值内容，不让短指令覆盖创作主题。
-- 同一 Conversation 默认同主题；上一轮 Run 失败且没有 `lastArtifactId` 时，用户只发送“重新生成”仍应继承上一轮原始需求。
+- 完整、自洽的新提示词在同一 Conversation 中也必须解析为新创作，不得因存在历史而继承旧主题。
+- 上一轮 Run 失败后，只有“重试”“重新生成”等明确操作指令复用 `lastAttempt.resolvedRequest`；新的完整需求不复用失败请求。
 - IntentResolver 判断同主题/新主题结果必须冻结到 `graph_runs.context_json.intentResolution`，用于审计和复现。
 - 用户明确切换新主题时，IntentResolver 判定为 `new_creation`，清空旧主题上下文。
 - 当前短指令没有可继承历史需求且置信度低时，进入 clarification，不生成“未指定主题”的泛化文章。
@@ -51,6 +52,16 @@
 - RunContext 创建后保持冻结，后续用户消息不影响正在执行的 Run。
 - 新建 Conversation 不继承旧 Conversation 的 Working Memory。
 - Conversation 删除时清理对应 Working Memory。
+
+## V2 规范化请求与兼容测试
+
+- 首次 Turn、后续 Turn 和兼容持久化入口都通过同一个 Creation Context Assembler，等价输入生成等价请求。
+- V2 RunContext 必须携带 `schemaVersion=2` 和合法 `resolvedRequest`，当前 Turn 只出现一次。
+- `off` 执行 V1；`shadow` 生成 V2 诊断但 Worker 仍执行 V1；`explicit` 只对显式模式执行 V2；`all` 按稳定 Conversation 分桶执行。
+- 同一 Conversation 的百分比分桶结果稳定，不因进程重启或 Run 次数改变。
+- 旧 Artifact 缺少 `creationSnapshot` 时，仅呈现修订不得进入短路路径，应安全降级到完整兼容路径。
+- 成功 Run 更新 `successfulBaseline`；失败 Run 只更新 `lastAttempt`，较旧 contextVersion 的迟到写入不能覆盖较新记忆。
+- clarification 恢复后更新同一冻结请求的 operation 和约束，不重新拼接全部历史消息。
 
 ## SSE 与多 Agent 回归
 
@@ -74,6 +85,7 @@
 - 不能绑定其他用户或其他 Conversation 的 Resource。
 - 删除接口不泄露无权限 Conversation 是否存在。
 - RunEvent 和 Assistant Message 不包含密钥、原始思维链和未脱敏 prompt。
+- `run.failed.failure` 只包含安全 code、stage、category、recoverability 和 violation code，不包含供应商原始错误或堆栈。
 
 ## 验证命令
 

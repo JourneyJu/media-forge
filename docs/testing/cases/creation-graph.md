@@ -417,3 +417,45 @@ schema 后成为 AgentOutput；浏览器收不到原始 reasoning 或残缺 JSON
 步骤：绕过 Raw 层构造版本过期、重复 ID 或未知引用的 Canonical 对象并执行 Structure Guard。
 
 期望：分别返回 `STRUCTURE_VERSION_STALE`、`SECTION_ID_DUPLICATED` 或 `SECTION_REFERENCE_INVALID`；不发起模型纠错，日志将其标记为服务端一致性或状态污染问题。
+
+## CG-061 完整新需求不继承旧主题
+
+步骤：在已有成功 Artifact 的 Conversation 中，以 `auto` 提交另一组完整、自洽的新公众号需求并执行 Graph。
+
+期望：Worker 只执行冻结的 V2 `ResolvedCreationRequest`；Brief、ContentPlan、标题和正文不包含旧主题，当前 Turn 不重复出现在 instructionMemory。
+
+## CG-062 仅呈现修订短路执行
+
+步骤：基于含 `creationSnapshot` 的 Artifact 提交“正文不变，改为深蓝极简风”，记录节点轨迹和最终快照。
+
+期望：Graph 从 Presentation 开始，只执行 Presentation、Layout、Review 和 Artifact；Brief、ContentPlan、标题、提纲、正文、ImagePlan 逐项保持不变。
+
+## CG-063 局部修订越界保护
+
+步骤：在仅呈现修订中模拟 Presentation、Layout 或后续状态错误改写正文、章节身份或图片语义。
+
+期望：Artifact 前不变量校验返回 `MUTATION_SCOPE_VIOLATION`，Run failed 且不创建 Artifact 或 ArticleVersion。
+
+## CG-064 创意主题字面未命中
+
+步骤：生成语义完整但没有逐字复述 `creativeTheme` 或 subject 的文章，同时 Reviewer 的实体、事实和观点覆盖通过。
+
+期望：只记录 `LEGACY_SUBJECT_MISMATCH` 诊断，Artifact 正常创建，不再出现 `SUBJECT_MISMATCH` 硬失败。
+
+## CG-065 用户逐字要求缺失
+
+步骤：用户明确声明一段文字必须原样出现，但最终 Draft 缺少该文本。
+
+期望：Artifact Builder 返回 `VERBATIM_REQUIREMENT_MISSING`，结构化失败 category 为 integrity，不创建发布预览。
+
+## CG-066 Reviewer 内容身份覆盖
+
+步骤：为 ContentIdentity 分别构造实体覆盖、事实缺失、观点矛盾和语义不确定场景。
+
+期望：`contentCoverage` 为每项返回 evidence、confidence 和 `covered|missing|contradicted|uncertain`；明确缺失或矛盾定向修订，不确定项只给 warning。
+
+## CG-067 结构化失败分类
+
+步骤：分别触发模型超时、内容质量未通过、结构不变量失败和未知系统错误。
+
+期望：`run.failed.failure.category` 分别为 provider、quality、integrity 和 system，并给出正确 recoverability；事件不暴露原始供应商错误、堆栈、prompt 或 raw output。
