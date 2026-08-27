@@ -397,6 +397,7 @@ export function createAgentProgressReporter(
 }
 
 function createInitialState(job: CreationRunJob, context: {
+  schemaVersion?: 1 | 2;
   userInput: string;
   currentInstruction?: string;
   intentResolution?: CreationGraphState["intentResolution"];
@@ -407,19 +408,20 @@ function createInitialState(job: CreationRunJob, context: {
   selectedSkills?: CreationGraphState["selectedSkills"];
   memory?: CreationGraphState["memory"];
 }): CreationGraphState {
-  const scopedSnapshot = context.resolvedRequest?.operation === "revise"
-    && context.resolvedRequest.mutationScope.length === 1
-    && context.resolvedRequest.mutationScope[0] === "presentation"
+  const executableRequest = context.schemaVersion === 2 ? context.resolvedRequest : undefined;
+  const scopedSnapshot = executableRequest?.operation === "revise"
+    && executableRequest.mutationScope.length === 1
+    && executableRequest.mutationScope[0] === "presentation"
     ? context.baseSnapshot
     : undefined;
   return {
     workspaceId: job.workspaceId,
     conversationId: job.conversationId,
     runId: job.runId,
-    userInput: context.resolvedRequest?.currentInstruction ?? context.currentInstruction ?? context.userInput,
+    userInput: executableRequest?.currentInstruction ?? context.currentInstruction ?? context.userInput,
     intentResolution: context.intentResolution,
-    resolvedRequest: context.resolvedRequest,
-    baseSnapshot: context.baseSnapshot,
+    resolvedRequest: executableRequest,
+    baseSnapshot: executableRequest ? context.baseSnapshot : undefined,
     resourceIds: context.resourceIds,
     skillId: context.skillId,
     selectedSkills: context.selectedSkills ?? [],
@@ -760,6 +762,7 @@ export async function processCreationRunJob(
         runId: payload.runId,
         operation: context.resolvedRequest?.operation ?? context.creationMode,
         mutationScope: context.resolvedRequest?.mutationScope ?? [],
+        resolvedRequest: context.resolvedRequest,
         failure
       }
     );

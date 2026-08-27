@@ -155,7 +155,7 @@ const GraphAnnotation = Annotation.Root({
 });
 
 function requiresClarification(state: CreationGraphState): boolean {
-  if (state.resolvedRequest?.operation === "clarify") return true;
+  if (state.resolvedRequest) return state.resolvedRequest.operation === "clarify";
   if (state.intentResolution?.mode === "clarify") return true;
   if (state.memory?.lastArtifactId) return false;
   if (state.memory?.instructionMemory?.rebuiltContext) return false;

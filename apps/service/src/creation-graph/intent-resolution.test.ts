@@ -137,6 +137,48 @@ describe("resolveConversationIntent", () => {
     expect(request.clarification?.reasonCode).toBe("CREATION_INTENT_AMBIGUOUS");
   });
 
+  it("reuses the frozen failed request when the user retries", () => {
+    const frozen = resolveCanonicalCreationRequest({
+      requestedCreationMode: "new",
+      currentInstruction: "写一篇夏日亲子阅读公众号文章",
+      currentResourceIds: [],
+      memory: emptyMemory,
+      userMessages: [{ id: "message_1", content: "写一篇夏日亲子阅读公众号文章" }]
+    });
+    const request = resolveCanonicalCreationRequest({
+      requestedCreationMode: "auto",
+      currentInstruction: "重试",
+      currentResourceIds: [],
+      memory: {
+        ...emptyMemory,
+        lastAttempt: {
+          runId: "run_failed",
+          operation: "new",
+          mutationScope: frozen.mutationScope,
+          status: "failed",
+          resolvedRequest: frozen,
+          failure: {
+            code: "MODEL_PROVIDER_UNAVAILABLE",
+            stage: "writer",
+            category: "provider",
+            recoverability: "retry_same",
+            summary: "模型暂时不可用。",
+            violations: []
+          },
+          updatedAt: "2026-08-27T00:00:00.000Z"
+        }
+      },
+      userMessages: [
+        { id: "message_1", content: "写一篇夏日亲子阅读公众号文章" },
+        { id: "message_2", content: "重试" }
+      ]
+    });
+
+    expect(request.operation).toBe("new");
+    expect(request.currentInstruction).toBe("写一篇夏日亲子阅读公众号文章");
+    expect(request.contentIdentity).toEqual(frozen.contentIdentity);
+  });
+
   it("starts a new topic only when the user explicitly asks for it", () => {
     const intent = resolveConversationIntent({
       requestedCreationMode: "auto",

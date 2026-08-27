@@ -66,6 +66,53 @@ describe("mergeClarificationIntoRunContext", () => {
     expect(result.memory.resourceContext.currentResourceIds).toContain("image_1");
     expect(result.memory.materialSummary[0]?.type).toBe("image");
   });
+
+  it("turns a V2 ambiguity answer into an executable request", () => {
+    const v2Context: CreationRunContext = {
+      ...context,
+      schemaVersion: 2,
+      creationMode: "continue",
+      resolvedRequest: {
+        schemaVersion: 2,
+        operation: "clarify",
+        decisionSource: "rule",
+        confidence: "low",
+        currentInstruction: "做得更好一点",
+        mutationScope: [],
+        inheritance: {
+          content: "preserve",
+          presentation: "preserve",
+          resources: "explicit"
+        },
+        contentIdentity: {
+          topicSummary: "既有文章",
+          namedEntities: [],
+          requiredFacts: [],
+          requiredClaims: [],
+          mustIncludeVerbatim: [],
+          prohibitedClaims: []
+        },
+        provenance: [],
+        clarification: {
+          reasonCode: "CREATION_INTENT_AMBIGUOUS",
+          question: "继续修改还是重新创作？"
+        }
+      },
+      memory: {
+        ...context.memory,
+        lastArtifactId: "artifact_1"
+      }
+    };
+    const result = mergeClarificationIntoRunContext(v2Context, [{
+      questionId: "CREATION_INTENT_AMBIGUOUS",
+      value: "基于上一版继续修改"
+    }]);
+
+    expect(result.resolvedRequest?.operation).toBe("revise");
+    expect(result.resolvedRequest?.clarification).toBeUndefined();
+    expect(result.resolvedRequest?.baseArtifactId).toBe("artifact_1");
+    expect(result.currentInstruction).toBe(result.resolvedRequest?.currentInstruction);
+  });
 });
 
 describe("failed run memory", () => {
@@ -103,6 +150,7 @@ describe("failed run memory", () => {
       runId: "run_failed",
       operation: "revise",
       mutationScope: ["presentation"],
+      resolvedRequest: undefined,
       failure: {
         code: "CREATION_INTEGRITY_FAILED",
         stage: "artifact",

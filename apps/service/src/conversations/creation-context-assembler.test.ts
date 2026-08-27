@@ -1,6 +1,9 @@
 import type { ConversationWorkingMemory } from "@mediaforge/contracts";
 import { describe, expect, it } from "vitest";
-import { assembleCreationRunContext } from "./creation-context-assembler";
+import {
+  assembleCreationRunContext,
+  creationContextV2ModeForConversation
+} from "./creation-context-assembler";
 
 const memory: ConversationWorkingMemory = {
   conversationId: "conversation_1",
@@ -86,7 +89,7 @@ describe("assembleCreationRunContext", () => {
     expect(context.memory.instructionMemory.recentValuableTurns).toEqual([]);
   });
 
-  it("maps an explicit style revision to presentation without duplicating the current instruction", () => {
+  it("keeps a legacy explicit style revision on V1 until a base snapshot exists", () => {
     const userInput = "换种风格重新实现";
     const context = assembleCreationRunContext({
       ...baseInput(),
@@ -100,9 +103,10 @@ describe("assembleCreationRunContext", () => {
     });
 
     expect(context.resolvedRequest?.mutationScope).toEqual(["presentation"]);
+    expect(context.schemaVersion).toBeUndefined();
     expect(context.memory.revisionIntent?.target).toBe("style");
     expect(context.resourceIds).toEqual(["old_image"]);
-    expect(context.memory.instructionMemory.recentValuableTurns.map((turn) => turn.content)).not.toContain(userInput);
+    expect(context.memory.instructionMemory.recentValuableTurns.map((turn) => turn.content)).toContain(userInput);
     expect(context.currentInstruction).toBe(userInput);
   });
 
@@ -123,5 +127,70 @@ describe("assembleCreationRunContext", () => {
     expect(context.resolvedRequest?.operation).toBe("new");
     expect(context.creationMode).toBe("revise");
     expect(context.memory.brief?.subject).toBe("旧的舞蹈获奖文章");
+  });
+
+  it("executes a self-contained Auto replacement on an isolated V2 context", () => {
+    const userInput = "请写一篇面向年轻父母的夏日亲子阅读公众号文章，语气轻松自然。";
+    const context = assembleCreationRunContext({
+      ...baseInput(),
+      userInput,
+      requestedCreationMode: "auto",
+      userMessages: [
+        { id: "message_1", content: "写一篇舞蹈获奖文章" },
+        { id: "message_2", content: userInput }
+      ],
+      v2Mode: "all"
+    });
+
+    expect(context.schemaVersion).toBe(2);
+    expect(context.creationMode).toBe("new");
+    expect(context.resolvedRequest?.operation).toBe("new");
+    expect(context.resourceIds).toEqual([]);
+    expect(context.memory.brief).toBeUndefined();
+    expect(context.memory.instructionMemory.recentValuableTurns).toEqual([]);
+  });
+
+  it("freezes an ambiguous Auto request as clarification before content generation", () => {
+    const userInput = "做得更好一点";
+    const context = assembleCreationRunContext({
+      ...baseInput(),
+      userInput,
+      requestedCreationMode: "auto",
+      userMessages: [
+        { id: "message_1", content: "写一篇舞蹈获奖文章" },
+        { id: "message_2", content: userInput }
+      ],
+      v2Mode: "all"
+    });
+
+    expect(context.schemaVersion).toBe(2);
+    expect(context.resolvedRequest?.operation).toBe("clarify");
+    expect(context.resolvedRequest?.clarification?.question).toContain("继续修改");
+  });
+
+  it("falls back to V1 for a scoped revision of a legacy artifact without a snapshot", () => {
+    const userInput = "换种风格重新实现";
+    const context = assembleCreationRunContext({
+      ...baseInput(),
+      userInput,
+      requestedCreationMode: "auto",
+      userMessages: [
+        { id: "message_1", content: "写一篇舞蹈获奖文章" },
+        { id: "message_2", content: userInput }
+      ],
+      v2Mode: "all"
+    });
+
+    expect(context.schemaVersion).toBeUndefined();
+    expect(context.resolvedRequest?.mutationScope).toEqual(["presentation"]);
+  });
+
+  it("uses a stable conversation bucket for percentage rollout", () => {
+    const first = creationContextV2ModeForConversation("conversation_stable", "all", "25");
+    const second = creationContextV2ModeForConversation("conversation_stable", "all", "25");
+
+    expect(second).toBe(first);
+    expect(creationContextV2ModeForConversation("conversation_stable", "all", "0")).toBe("shadow");
+    expect(creationContextV2ModeForConversation("conversation_stable", "all", "100")).toBe("all");
   });
 });

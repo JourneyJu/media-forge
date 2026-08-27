@@ -612,6 +612,7 @@ export const conversationWorkingMemorySchema = z.object({
     operation: creationOperationSchema,
     mutationScope: z.array(creationMutationScopeSchema).max(5).default([]),
     status: z.enum(["completed", "failed", "cancelled"]),
+    resolvedRequest: resolvedCreationRequestSchema.optional(),
     failure: creationFailureEnvelopeSchema.optional(),
     updatedAt: z.string().trim().min(1)
   }).optional(),

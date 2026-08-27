@@ -20,13 +20,14 @@ import type {
 } from "@mediaforge/contracts";
 import {
   conversationWorkingMemorySchema,
-  creationRunContextSchema
+  creationRunContextSchema,
+  resolvedCreationRequestSchema
 } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
 import { extractArtifactResourceIds } from "./context-rebuild";
 import {
   assembleCreationRunContext,
-  creationContextV2ModeFromEnv,
+  creationContextV2ModeForConversation,
   parseCreationSnapshot
 } from "../conversations/creation-context-assembler";
 
@@ -157,10 +158,55 @@ export function mergeClarificationIntoRunContext(
     ...resourceSummaries
   ].slice(-50);
   const mergedUserInput = `${graphContext.userInput}\n\nAdditional information:\n${clarificationText}`;
+  const clarificationChoice = answers.map((answer) => answer.value).join(" ");
+  const wantsNew = /重新创作|新创作|从头|新主题/u.test(clarificationChoice);
+  const baseArtifactId = graphContext.memory.lastArtifactId;
+  const resumedOperation = wantsNew ? "new" : baseArtifactId ? "revise" : "continue";
+  const resumedRequest = graphContext.resolvedRequest?.operation === "clarify"
+    ? resolvedCreationRequestSchema.parse({
+        ...graphContext.resolvedRequest,
+        operation: resumedOperation,
+        decisionSource: "user",
+        confidence: "high",
+        currentInstruction: mergedUserInput,
+        ...(resumedOperation === "revise" ? { baseArtifactId } : { baseArtifactId: undefined }),
+        mutationScope: resumedOperation === "new"
+          ? ["content", "title", "structure", "images", "presentation"]
+          : resumedOperation === "revise"
+            ? ["content", "title", "structure", "images", "presentation"]
+            : ["content"],
+        inheritance: {
+          content: resumedOperation === "new" ? "replace" : resumedOperation === "continue" ? "extend" : "preserve",
+          presentation: resumedOperation === "new" ? "replace" : "preserve",
+          resources: resumedOperation === "new" ? "current_only" : resumedOperation === "revise" ? "artifact_used" : "explicit"
+        },
+        contentIdentity: resumedOperation === "new"
+          ? {
+              topicSummary: clip(clarificationText, 300),
+              namedEntities: [],
+              requiredFacts: [],
+              requiredClaims: [],
+              mustIncludeVerbatim: [],
+              prohibitedClaims: []
+            }
+          : graphContext.resolvedRequest.contentIdentity,
+        provenance: [
+          ...graphContext.resolvedRequest.provenance,
+          {
+            field: "clarification",
+            source: "current_turn" as const,
+            sourceId: "clarification"
+          }
+        ],
+        clarification: undefined
+      })
+    : graphContext.resolvedRequest;
   return {
     ...graphContext,
     userInput: mergedUserInput,
     currentInstruction: mergedUserInput,
+    resolvedRequest: resumedRequest,
+    creationMode: resumedOperation === "new" ? "new" : resumedOperation === "revise" ? "revise" : "continue",
     resourceIds,
     currentResourceIds,
     resourceContext: {
@@ -332,6 +378,7 @@ export function memoryFromGraphResult(
       operation: state.resolvedRequest?.operation ?? (previous.lastArtifactId ? "revise" : "new"),
       mutationScope: state.resolvedRequest?.mutationScope ?? [],
       status: "completed",
+      resolvedRequest: state.resolvedRequest,
       updatedAt: now()
     },
     lastArtifactId: artifact.id,
@@ -425,6 +472,7 @@ export function memoryFromFailedRun(
     runId: string;
     operation: NonNullable<ConversationWorkingMemory["lastAttempt"]>["operation"];
     mutationScope: NonNullable<ConversationWorkingMemory["lastAttempt"]>["mutationScope"];
+    resolvedRequest?: NonNullable<ConversationWorkingMemory["lastAttempt"]>["resolvedRequest"];
     failure: CreationFailureEnvelope;
     updatedAt?: string;
   }
@@ -438,6 +486,7 @@ export function memoryFromFailedRun(
       operation: input.operation,
       mutationScope: input.mutationScope,
       status: "failed",
+      resolvedRequest: input.resolvedRequest,
       failure: input.failure,
       updatedAt: input.updatedAt ?? now()
     },
@@ -736,7 +785,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
           artifactResourceIds: extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json),
           baseSnapshot: parseCreationSnapshot(latestArtifactResult.rows[0]?.payload_json),
           memory,
-          v2Mode: creationContextV2ModeFromEnv(),
+          v2Mode: creationContextV2ModeForConversation(run.conversationId),
           now: run.createdAt
         });
         await client.query(
@@ -1077,6 +1126,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
         runId: string;
         operation: NonNullable<ConversationWorkingMemory["lastAttempt"]>["operation"];
         mutationScope: NonNullable<ConversationWorkingMemory["lastAttempt"]>["mutationScope"];
+        resolvedRequest?: NonNullable<ConversationWorkingMemory["lastAttempt"]>["resolvedRequest"];
         failure: CreationFailureEnvelope;
       }
     ): Promise<void> {

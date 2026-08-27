@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   ConversationWorkingMemory,
   CreateConversationTurnRequest,
@@ -22,7 +23,21 @@ import {
 export type CreationContextV2Mode = "off" | "shadow" | "explicit" | "all";
 
 export function creationContextV2ModeFromEnv(value = process.env.CREATION_CONTEXT_V2_MODE): CreationContextV2Mode {
-  return value === "off" || value === "explicit" || value === "all" ? value : "shadow";
+  return value === "off" || value === "shadow" || value === "explicit" ? value : "all";
+}
+
+export function creationContextV2ModeForConversation(
+  conversationId: string,
+  mode = creationContextV2ModeFromEnv(),
+  percentageValue = process.env.CREATION_CONTEXT_V2_PERCENT
+): CreationContextV2Mode {
+  if (mode !== "all") return mode;
+  const parsed = Number(percentageValue ?? 100);
+  const percentage = Number.isFinite(parsed) ? Math.min(100, Math.max(0, Math.floor(parsed))) : 100;
+  if (percentage >= 100) return "all";
+  if (percentage <= 0) return "shadow";
+  const bucket = Number.parseInt(createHash("sha256").update(conversationId).digest("hex").slice(0, 8), 16) % 100;
+  return bucket < percentage ? "all" : "shadow";
 }
 
 export interface AssembleCreationRunContextInput {
@@ -114,7 +129,12 @@ export function assembleCreationRunContext(input: AssembleCreationRunContextInpu
         memory: input.memory,
         userMessages: input.userMessages
       });
-  const executeV2 = Boolean(resolvedRequest) && shouldExecuteV2(v2Mode, input.requestedCreationMode);
+  const scopedRevisionNeedsSnapshot = resolvedRequest?.operation === "revise"
+    && resolvedRequest.mutationScope.length === 1
+    && resolvedRequest.mutationScope[0] === "presentation";
+  const executeV2 = Boolean(resolvedRequest)
+    && shouldExecuteV2(v2Mode, input.requestedCreationMode)
+    && (!scopedRevisionNeedsSnapshot || Boolean(input.baseSnapshot));
   const legacyIntent = resolveConversationIntent({
     requestedCreationMode: input.requestedCreationMode,
     currentInstruction: input.userInput,
@@ -168,7 +188,7 @@ export function assembleCreationRunContext(input: AssembleCreationRunContextInpu
     ...(executeV2 ? { schemaVersion: 2 } : {}),
     userInput: input.userInput,
     resourceIds,
-    currentInstruction: input.userInput,
+    currentInstruction: executeV2 ? resolvedRequest?.currentInstruction : input.userInput,
     intentResolution: legacyIntent,
     ...(resolvedRequest ? { resolvedRequest } : {}),
     ...(executeV2 && creationMode === "revise" && input.baseSnapshot

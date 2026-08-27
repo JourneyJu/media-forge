@@ -154,6 +154,18 @@ export function resolveCanonicalCreationRequest(input: {
     || input.userMessages.length > 1
   );
 
+  if (
+    /^(重试|重新试一次|再试一次|重新生成|再生成一次)[。！!\s]*$/u.test(currentInstruction)
+    && input.memory.lastAttempt?.status === "failed"
+    && input.memory.lastAttempt.resolvedRequest
+  ) {
+    return resolvedCreationRequestSchema.parse({
+      ...input.memory.lastAttempt.resolvedRequest,
+      decisionSource: "user",
+      confidence: "high"
+    });
+  }
+
   if (input.requestedCreationMode === "new") {
     return buildResolvedRequest({
       operation: "new",
