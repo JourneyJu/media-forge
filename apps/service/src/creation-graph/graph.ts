@@ -1,4 +1,5 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { ZodError } from "zod";
 import type {
   ArtifactValidationResult,
   ArticleDraft,
@@ -17,7 +18,8 @@ import type {
 import { buildArticleDocument } from "./artifact-builder";
 import {
   createCreationAgents,
-  type CreationAgents
+  type CreationAgents,
+  type ModelStructureCorrection
 } from "./agents";
 import {
   enforceUserPresentationConstraints,
@@ -29,20 +31,72 @@ import {
   assertImagePlanStructure,
   assertLayoutPlanStructure,
   assertOutlineStructure,
-  normalizeDraftStructure,
-  normalizeImagePlanStructure,
-  normalizeLayoutPlanStructure,
-  normalizeOutlineStructure
+  canonicalizeDraftStructure,
+  canonicalizeImagePlanStructure,
+  canonicalizeLayoutPlanStructure,
+  canonicalizeOutlineStructure,
+  canonicalizePresentationStructure,
+  ModelStructureError
 } from "./structure-guard";
 
 export interface GraphExecutionObserver {
   onNodeStarted?(nodeName: string, title: string): void | Promise<void>;
+  onNodeRetry?(
+    nodeName: string,
+    title: string,
+    error: ModelStructureError
+  ): void | Promise<void>;
   onNodeCompleted?(
     nodeName: string,
     title: string,
     summary: string,
     update: Partial<CreationGraphState>
   ): void | Promise<void>;
+}
+
+function modelStructureCorrection(
+  contentPlan: ContentPlan,
+  error: ModelStructureError
+): ModelStructureCorrection {
+  return {
+    code: error.code,
+    expectedSectionCount: contentPlan.sections.length,
+    allowedSectionIndexes: contentPlan.sections.map((_section, index) => index),
+    instruction: error.code === "MODEL_SECTION_COUNT_MISMATCH"
+      ? `sections 必须恰好返回 ${contentPlan.sections.length} 项，并严格保持 ContentPlan 输入顺序。`
+      : `章节引用只能使用 sectionIndex：${contentPlan.sections.map((_section, index) => index).join("、")}。`
+  };
+}
+
+async function generateCanonicalStructure<TRaw, TCanonical>(options: {
+  contentPlan: ContentPlan;
+  nodeName: string;
+  title: string;
+  observer?: GraphExecutionObserver;
+  generate: (correction?: ModelStructureCorrection) => Promise<TRaw>;
+  canonicalize: (contentPlan: ContentPlan, raw: TRaw) => TCanonical;
+}): Promise<TCanonical> {
+  const generate = async (correction?: ModelStructureCorrection): Promise<TRaw> => {
+    try {
+      return await options.generate(correction);
+    } catch (error) {
+      if (!(error instanceof ZodError) && !(error instanceof SyntaxError)) throw error;
+      throw new ModelStructureError("MODEL_OUTPUT_SCHEMA_INVALID", {
+        outputKind: options.nodeName,
+        correctionExhausted: true
+      });
+    }
+  };
+
+  const raw = await generate();
+  try {
+    return options.canonicalize(options.contentPlan, raw);
+  } catch (error) {
+    if (!(error instanceof ModelStructureError)) throw error;
+    await options.observer?.onNodeRetry?.(options.nodeName, options.title, error);
+    const corrected = await generate(modelStructureCorrection(options.contentPlan, error));
+    return options.canonicalize(options.contentPlan, corrected);
+  }
 }
 
 interface GraphOptions {
@@ -298,12 +352,20 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "结构设计",
     async (state) => {
       const contentPlan = requireContentPlan(state);
-      const outline = normalizeOutlineStructure(contentPlan, await agents.createOutline({
-        brief: requireBrief(state),
+      const outline = await generateCanonicalStructure({
         contentPlan,
-        titles: requireTitles(state),
-        selectedSkills: state.selectedSkills
-      }));
+        nodeName: "outline",
+        title: "结构设计",
+        observer,
+        generate: (structureCorrection) => agents.createOutline({
+          brief: requireBrief(state),
+          contentPlan,
+          titles: requireTitles(state),
+          selectedSkills: state.selectedSkills,
+          ...(structureCorrection ? { structureCorrection } : {})
+        }),
+        canonicalize: canonicalizeOutlineStructure
+      });
       assertOutlineStructure(contentPlan, outline);
       return { outline };
     },
@@ -316,15 +378,23 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "正文创作",
     async (state) => {
       const contentPlan = requireContentPlan(state);
-      const draft = normalizeDraftStructure(contentPlan, await agents.writeDraft({
-        brief: requireBrief(state),
+      const draft = await generateCanonicalStructure({
         contentPlan,
-        titles: requireTitles(state),
-        outline: requireOutline(state),
-        imagePlan: requireImagePlan(state),
-        selectedSkills: state.selectedSkills,
-        memory: state.memory
-      }));
+        nodeName: "writer",
+        title: "正文创作",
+        observer,
+        generate: (structureCorrection) => agents.writeDraft({
+          brief: requireBrief(state),
+          contentPlan,
+          titles: requireTitles(state),
+          outline: requireOutline(state),
+          imagePlan: requireImagePlan(state),
+          selectedSkills: state.selectedSkills,
+          memory: state.memory,
+          ...(structureCorrection ? { structureCorrection } : {})
+        }),
+        canonicalize: canonicalizeDraftStructure
+      });
       assertDraftStructure(contentPlan, draft);
       return { draft };
     },
@@ -337,13 +407,21 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "配图规划",
     async (state) => {
       const contentPlan = requireContentPlan(state);
-      const imagePlan = normalizeImagePlanStructure(contentPlan, await agents.planImages({
-        brief: requireBrief(state),
+      const imagePlan = await generateCanonicalStructure({
         contentPlan,
-        outline: requireOutline(state),
-        materials: requireMaterials(state),
-        selectedSkills: state.selectedSkills
-      }));
+        nodeName: "image_plan",
+        title: "配图规划",
+        observer,
+        generate: (structureCorrection) => agents.planImages({
+          brief: requireBrief(state),
+          contentPlan,
+          outline: requireOutline(state),
+          materials: requireMaterials(state),
+          selectedSkills: state.selectedSkills,
+          ...(structureCorrection ? { structureCorrection } : {})
+        }),
+        canonicalize: canonicalizeImagePlanStructure
+      });
       assertImagePlanStructure(contentPlan, imagePlan);
       return { imagePlan };
     },
@@ -358,7 +436,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
       const contentPlan = requireContentPlan(state);
       const constraints = extractUserPresentationConstraints(state.userInput);
       const presentationStyleDecision = enforceUserPresentationConstraints(
-        await agents.createPresentation({
+        canonicalizePresentationStructure(contentPlan, await agents.createPresentation({
         userInput: state.userInput,
         constraints,
         brief: requireBrief(state),
@@ -367,12 +445,9 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         imagePlan: requireImagePlan(state),
         materials: requireMaterials(state),
         selectedSkills: state.selectedSkills
-        }),
+        })),
         constraints
       );
-      if (presentationStyleDecision.structureVersion !== contentPlan.structureVersion) {
-        throw new Error("PRESENTATION_STRUCTURE_VERSION_MISMATCH");
-      }
       return {
         userPresentationConstraints: constraints,
         presentationStyleDecision
@@ -387,14 +462,22 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "版式设计",
     async (state) => {
       const contentPlan = requireContentPlan(state);
-      const layoutPlan = normalizeLayoutPlanStructure(contentPlan, await agents.createLayout({
-        brief: requireBrief(state),
+      const layoutPlan = await generateCanonicalStructure({
         contentPlan,
-        draft: requireDraft(state),
-        imagePlan: requireImagePlan(state),
-        presentationStyleDecision: requirePresentationStyleDecision(state),
-        selectedSkills: state.selectedSkills
-      }));
+        nodeName: "layout",
+        title: "版式设计",
+        observer,
+        generate: (structureCorrection) => agents.createLayout({
+          brief: requireBrief(state),
+          contentPlan,
+          draft: requireDraft(state),
+          imagePlan: requireImagePlan(state),
+          presentationStyleDecision: requirePresentationStyleDecision(state),
+          selectedSkills: state.selectedSkills,
+          ...(structureCorrection ? { structureCorrection } : {})
+        }),
+        canonicalize: canonicalizeLayoutPlanStructure
+      });
       assertLayoutPlanStructure(contentPlan, layoutPlan);
       return { layoutPlan };
     },
@@ -430,18 +513,26 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "内容修订",
     async (state) => {
       const contentPlan = requireContentPlan(state);
-      const draft = normalizeDraftStructure(contentPlan, await agents.reviseDraft({
-        brief: requireBrief(state),
+      const draft = await generateCanonicalStructure({
         contentPlan,
-        draft: requireDraft(state),
-        imagePlan: requireImagePlan(state),
-        presentationStyleDecision: requirePresentationStyleDecision(state),
-        layoutPlan: requireLayoutPlan(state),
-        userInput: state.userInput,
-        report: state.reviewReports.at(-1)!,
-        selectedSkills: state.selectedSkills,
-        memory: state.memory
-      }));
+        nodeName: "revision",
+        title: "内容修订",
+        observer,
+        generate: (structureCorrection) => agents.reviseDraft({
+          brief: requireBrief(state),
+          contentPlan,
+          draft: requireDraft(state),
+          imagePlan: requireImagePlan(state),
+          presentationStyleDecision: requirePresentationStyleDecision(state),
+          layoutPlan: requireLayoutPlan(state),
+          userInput: state.userInput,
+          report: state.reviewReports.at(-1)!,
+          selectedSkills: state.selectedSkills,
+          memory: state.memory,
+          ...(structureCorrection ? { structureCorrection } : {})
+        }),
+        canonicalize: canonicalizeDraftStructure
+      });
       assertDraftStructure(contentPlan, draft);
       return {
         draft: withSelectedTitle(draft, requireTitles(state)),

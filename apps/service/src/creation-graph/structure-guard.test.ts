@@ -5,8 +5,18 @@ import {
   assertDraftStructure,
   assertImagePlanStructure,
   assertLayoutPlanStructure,
+  canonicalizeDraftStructure,
+  canonicalizeImagePlanStructure,
+  canonicalizeLayoutPlanStructure,
+  canonicalizeOutlineStructure,
+  canonicalizePresentationStructure,
+  ModelStructureError,
   StructureGuardError
 } from "./structure-guard";
+import {
+  createDeterministicPresentationDecision,
+  extractUserPresentationConstraints
+} from "./presentation";
 
 function plan(): ContentPlan {
   return assignContentPlanIdentity({
@@ -39,6 +49,120 @@ function draft(contentPlan: ContentPlan): ArticleDraft {
 }
 
 describe("structure guard", () => {
+  it("binds authoritative outline identities instead of trusting copied model identifiers", () => {
+    const contentPlan = plan();
+    const rawOutline = {
+      structureVersion: "model_supplied_version",
+      title: "award moment",
+      openingHook: "award news",
+      callToAction: "follow",
+      sections: contentPlan.sections.map((section, index) => ({
+        sectionId: index === 0 ? "section_1_transposed" : section.sectionId,
+        title: section.heading,
+        objective: section.purpose,
+        storyBeat: "story",
+        commercialGoal: "brand"
+      }))
+    };
+
+    const outline = canonicalizeOutlineStructure(contentPlan, rawOutline);
+
+    expect(outline.structureVersion).toBe(contentPlan.structureVersion);
+    expect(outline.sections.map((section) => section.sectionId)).toEqual(
+      contentPlan.sections.map((section) => section.sectionId)
+    );
+    expect(() => assertDraftStructure(contentPlan, canonicalizeDraftStructure(contentPlan, {
+      ...draft(contentPlan),
+      structureVersion: "model_supplied_version",
+      sections: draft(contentPlan).sections.map(({ sectionId: _sectionId, ...section }) => section)
+    }))).not.toThrow();
+  });
+
+  it("rejects ordered model output with a different section count before binding identities", () => {
+    const contentPlan = plan();
+    const rawDraft = draft(contentPlan);
+    rawDraft.sections.pop();
+
+    expect(() => canonicalizeDraftStructure(contentPlan, rawDraft)).toThrowError(
+      expect.objectContaining<ModelStructureError>({
+        code: "MODEL_SECTION_COUNT_MISMATCH"
+      })
+    );
+  });
+
+  it("resolves local image and layout indexes to authoritative section identities", () => {
+    const contentPlan = plan();
+
+    const imagePlan = canonicalizeImagePlanStructure(contentPlan, {
+      structureVersion: "model_supplied_version",
+      items: [{
+        placement: "section",
+        sectionIndex: 1,
+        sectionId: "model_supplied_id",
+        description: "practice image"
+      }]
+    });
+    const layoutPlan = canonicalizeLayoutPlanStructure(contentPlan, {
+      structureVersion: "model_supplied_version",
+      theme: "story",
+      palette: { primary: "#111111", accent: "#222222", text: "#333333", surface: "#FFFFFF" },
+      titleTreatment: "centered",
+      introTreatment: "plain",
+      sectionTreatment: "minimal",
+      imageTreatment: "framed",
+      blocks: [
+        { kind: "title" },
+        { kind: "section", sectionIndex: 2, sectionId: "model_supplied_id" }
+      ]
+    });
+
+    expect(imagePlan.structureVersion).toBe(contentPlan.structureVersion);
+    expect(imagePlan.items[0]?.sectionId).toBe(contentPlan.sections[1]?.sectionId);
+    expect(layoutPlan.structureVersion).toBe(contentPlan.structureVersion);
+    expect(layoutPlan.blocks[1]?.sectionId).toBe(contentPlan.sections[2]?.sectionId);
+  });
+
+  it("rejects out-of-range local section indexes before canonical structure validation", () => {
+    const contentPlan = plan();
+
+    for (const canonicalize of [
+      () => canonicalizeImagePlanStructure(contentPlan, {
+        items: [{ placement: "section", sectionIndex: 9, description: "image" }]
+      }),
+      () => canonicalizeLayoutPlanStructure(contentPlan, {
+        theme: "story",
+        palette: { primary: "#111111", accent: "#222222", text: "#333333", surface: "#FFFFFF" },
+        titleTreatment: "centered",
+        introTreatment: "plain",
+        sectionTreatment: "minimal",
+        imageTreatment: "framed",
+        blocks: [{ kind: "title" }, { kind: "section", sectionIndex: 9 }]
+      })
+    ]) {
+      expect(canonicalize).toThrowError(expect.objectContaining<ModelStructureError>({
+        code: "MODEL_SECTION_INDEX_INVALID"
+      }));
+    }
+  });
+
+  it("binds the presentation structure version on the server", () => {
+    const contentPlan = plan();
+    const rawDecision = createDeterministicPresentationDecision({
+      structureVersion: "model_supplied_version",
+      subject: "award",
+      goal: "event",
+      tone: "warm",
+      narrative: "growth",
+      callToAction: "follow",
+      imageCount: 2,
+      constraints: extractUserPresentationConstraints("complete the article"),
+      selectedSkills: []
+    });
+
+    expect(canonicalizePresentationStructure(contentPlan, rawDecision).structureVersion)
+      .toBe(contentPlan.structureVersion);
+  });
+
   it("allows display heading changes when section identity remains stable", () => {
     const contentPlan = plan();
     const value = draft(contentPlan);

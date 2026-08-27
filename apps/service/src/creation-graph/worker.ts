@@ -22,7 +22,7 @@ import {
   resolveModelGatewayConfig,
   type ModelGatewayProgressEvent
 } from "../model-gateway";
-import { StructureGuardError } from "./structure-guard";
+import { ModelStructureError, StructureGuardError } from "./structure-guard";
 import {
   createReasoningSummaryObserver,
   formatReasoningSummary,
@@ -126,6 +126,7 @@ export function sanitizeAgentProgressText(value: string): string {
 export function getCreationRunFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (/aborted|aborterror/iu.test(message)) return "模型响应超时，任务已结束，请重新生成。";
+  if (message.includes("MODEL_STRUCTURE_INVALID")) return "模型返回的章节结构自动纠正后仍未通过，请重新生成。";
   if (message.includes("STRUCTURE_GUARD_FAILED") || /SECTION_(?:ID|SET|ORDER|REFERENCE)|STRUCTURE_VERSION/iu.test(message)) return "创作产物的章节结构不一致，已停止生成以避免图片或正文错位。";
   if (message.includes("SUBJECT_MISMATCH")) return "最终内容与本轮主题匹配不足，未生成可发布预览。";
   if (message.includes("ARTIFACT_VALIDATION_FAILED")) return "最终内容未通过发布校验，未生成可发布预览。";
@@ -136,6 +137,15 @@ export function getCreationRunFailureMessage(error: unknown): string {
 
 export function shouldRetryCreationJob(attemptsMade: number, maxAttempts: number | undefined): boolean {
   return attemptsMade + 1 < (maxAttempts ?? 1);
+}
+
+export function shouldRetryCreationError(
+  error: unknown,
+  attemptsMade: number,
+  maxAttempts: number | undefined
+): boolean {
+  return !(error instanceof ModelStructureError)
+    && shouldRetryCreationJob(attemptsMade, maxAttempts);
 }
 
 export async function closeStaleAgentTasksForAttempt(
@@ -543,6 +553,14 @@ export async function processCreationRunJob(
       await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
       await progressReporter.start(taskId, agentNameByNode[nodeName] ?? `${nodeName} Agent`);
     },
+    async onNodeRetry(nodeName) {
+      await progressReporter.progress(agentNameByNode[nodeName] ?? `${nodeName} Agent`, {
+        type: "retry",
+        phase: "retrying",
+        summary: "章节结构未通过校验，正在纠正当前步骤",
+        retryCount: 1
+      });
+    },
     async onNodeCompleted(nodeName, title, summary, update) {
       const taskId = taskIds.get(nodeName);
       if (!taskId) throw new Error(`AGENT_TASK_NOT_STARTED:${nodeName}`);
@@ -658,7 +676,7 @@ export async function processCreationRunJob(
   } catch (error) {
     const activeTask = [...taskIds.values()].at(-1);
     if (activeTask) await persistence.failAgentTask(activeTask, error);
-    if (shouldRetryCreationJob(job.attemptsMade, job.opts.attempts)) {
+    if (shouldRetryCreationError(error, job.attemptsMade, job.opts.attempts)) {
       await persistence.failRunningAgentTasks(payload.runId, error);
       await progressReporter.retry(job.attemptsMade + 1);
       await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
@@ -672,6 +690,9 @@ export async function processCreationRunJob(
       message: getCreationRunFailureMessage(error),
       ...(error instanceof StructureGuardError ? {
         structureGuard: { code: error.code, details: error.details }
+      } : {}),
+      ...(error instanceof ModelStructureError ? {
+        modelStructure: { code: error.code, details: error.details }
       } : {})
     });
     await adminConsole.finishGeneration(

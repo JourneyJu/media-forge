@@ -5,12 +5,14 @@ import {
   contentPlanSchema,
   imagePlanSchema,
   layoutPlanSchema,
+  presentationStyleDecisionSchema,
   type ArticleDraft,
   type ArticleOutline,
   type ContentPlan,
   type ContentPlanInput,
   type ImagePlan,
-  type LayoutPlan
+  type LayoutPlan,
+  type PresentationStyleDecision
 } from "@mediaforge/contracts";
 
 export type StructureGuardCode =
@@ -28,6 +30,21 @@ export class StructureGuardError extends Error {
   ) {
     super(`STRUCTURE_GUARD_FAILED:${code}`);
     this.name = "StructureGuardError";
+  }
+}
+
+export type ModelStructureCode =
+  | "MODEL_SECTION_COUNT_MISMATCH"
+  | "MODEL_SECTION_INDEX_INVALID"
+  | "MODEL_OUTPUT_SCHEMA_INVALID";
+
+export class ModelStructureError extends Error {
+  constructor(
+    public readonly code: ModelStructureCode,
+    public readonly details: Record<string, unknown>
+  ) {
+    super(`MODEL_STRUCTURE_INVALID:${code}`);
+    this.name = "ModelStructureError";
   }
 }
 
@@ -131,6 +148,135 @@ export function assertLayoutPlanStructure(contentPlan: ContentPlan, layoutPlan: 
       .filter((block) => block.kind === "section" || (block.kind === "image" && block.sectionIndex !== undefined))
       .map((block) => block.sectionId)
   );
+}
+
+function assertModelSectionCount(
+  contentPlan: ContentPlan,
+  sections: unknown[],
+  outputKind: "outline" | "draft"
+): void {
+  if (sections.length !== contentPlan.sections.length) {
+    throw new ModelStructureError("MODEL_SECTION_COUNT_MISMATCH", {
+      outputKind,
+      expectedSectionCount: contentPlan.sections.length,
+      actualSectionCount: sections.length
+    });
+  }
+}
+
+export function canonicalizeOutlineStructure(contentPlan: ContentPlan, value: unknown): ArticleOutline {
+  const candidate = value as Record<string, unknown>;
+  const sections = Array.isArray(candidate.sections) ? candidate.sections : [];
+  assertModelSectionCount(contentPlan, sections, "outline");
+
+  return articleOutlineSchema.parse({
+    ...candidate,
+    structureVersion: contentPlan.structureVersion,
+    sections: sections.map((section, index) => {
+      const { sectionId: _modelSectionId, ...content } = section as Record<string, unknown>;
+      return {
+        ...content,
+        sectionId: contentPlan.sections[index]!.sectionId
+      };
+    })
+  });
+}
+
+export function canonicalizeDraftStructure(contentPlan: ContentPlan, value: unknown): ArticleDraft {
+  const candidate = value as Record<string, unknown>;
+  const sections = Array.isArray(candidate.sections) ? candidate.sections : [];
+  assertModelSectionCount(contentPlan, sections, "draft");
+
+  return articleDraftSchema.parse({
+    ...candidate,
+    structureVersion: contentPlan.structureVersion,
+    sections: sections.map((section, index) => {
+      const { sectionId: _modelSectionId, ...content } = section as Record<string, unknown>;
+      return {
+        ...content,
+        sectionId: contentPlan.sections[index]!.sectionId
+      };
+    })
+  });
+}
+
+function resolveModelSectionId(
+  contentPlan: ContentPlan,
+  sectionIndex: unknown,
+  outputKind: "imagePlan" | "layoutPlan"
+): string {
+  if (
+    typeof sectionIndex !== "number"
+    || !Number.isInteger(sectionIndex)
+    || sectionIndex < 0
+    || sectionIndex >= contentPlan.sections.length
+  ) {
+    throw new ModelStructureError("MODEL_SECTION_INDEX_INVALID", {
+      outputKind,
+      sectionIndex,
+      allowedSectionIndexes: contentPlan.sections.map((_section, index) => index)
+    });
+  }
+  return contentPlan.sections[sectionIndex]!.sectionId;
+}
+
+export function canonicalizeImagePlanStructure(contentPlan: ContentPlan, value: unknown): ImagePlan {
+  const candidate = value as Record<string, unknown>;
+  const items = Array.isArray(candidate.items) ? candidate.items : [];
+
+  return imagePlanSchema.parse({
+    ...candidate,
+    structureVersion: contentPlan.structureVersion,
+    items: items.map((item) => {
+      const {
+        sectionId: _modelSectionId,
+        sectionIndex: modelSectionIndex,
+        ...content
+      } = item as Record<string, unknown>;
+      if (content.placement !== "section") return content;
+      return {
+        ...content,
+        sectionIndex: modelSectionIndex,
+        sectionId: resolveModelSectionId(contentPlan, modelSectionIndex, "imagePlan")
+      };
+    })
+  });
+}
+
+export function canonicalizeLayoutPlanStructure(contentPlan: ContentPlan, value: unknown): LayoutPlan {
+  const candidate = value as Record<string, unknown>;
+  const blocks = Array.isArray(candidate.blocks) ? candidate.blocks : [];
+
+  return layoutPlanSchema.parse({
+    ...candidate,
+    structureVersion: contentPlan.structureVersion,
+    blocks: blocks.map((block) => {
+      const {
+        sectionId: _modelSectionId,
+        sectionIndex: modelSectionIndex,
+        ...content
+      } = block as Record<string, unknown>;
+      const referencesSection = content.kind === "section"
+        || (content.kind === "image" && modelSectionIndex !== undefined);
+      if (!referencesSection) return content;
+      return {
+        ...content,
+        sectionIndex: modelSectionIndex,
+        sectionId: resolveModelSectionId(contentPlan, modelSectionIndex, "layoutPlan")
+      };
+    })
+  });
+}
+
+export function canonicalizePresentationStructure(
+  contentPlan: ContentPlan,
+  value: unknown
+): PresentationStyleDecision {
+  const candidate = value as Record<string, unknown>;
+  return presentationStyleDecisionSchema.parse({
+    ...candidate,
+    structureVersion: contentPlan.structureVersion
+  });
 }
 
 export function normalizeOutlineStructure(contentPlan: ContentPlan, value: unknown): ArticleOutline {

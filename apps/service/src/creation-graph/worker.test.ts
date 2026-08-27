@@ -8,8 +8,10 @@ import {
   enrichImageMaterials,
   getCreationRunFailureMessage,
   sanitizeAgentProgressText,
+  shouldRetryCreationError,
   shouldRetryCreationJob
 } from "./worker";
+import { ModelStructureError } from "./structure-guard";
 
 const job: CreationRunJob = {
   runId: "run_1",
@@ -135,6 +137,8 @@ describe("agent progress safety", () => {
     expect(getCreationRunFailureMessage(new Error("This operation was aborted"))).toContain("模型响应超时");
     expect(getCreationRunFailureMessage(new Error("ARTIFACT_VALIDATION_FAILED:SUBJECT_MISMATCH")))
       .toContain("主题匹配不足");
+    expect(getCreationRunFailureMessage(new Error("MODEL_STRUCTURE_INVALID:MODEL_SECTION_COUNT_MISMATCH")))
+      .toContain("自动纠正后仍未通过");
     expect(getCreationRunFailureMessage(new Error("secret provider detail"))).not.toContain("secret");
   });
 
@@ -142,6 +146,12 @@ describe("agent progress safety", () => {
     expect(shouldRetryCreationJob(0, 3)).toBe(true);
     expect(shouldRetryCreationJob(1, 3)).toBe(true);
     expect(shouldRetryCreationJob(2, 3)).toBe(false);
+    expect(shouldRetryCreationError(
+      new ModelStructureError("MODEL_SECTION_COUNT_MISMATCH", {}),
+      0,
+      3
+    )).toBe(false);
+    expect(shouldRetryCreationError(new Error("MODEL_GATEWAY_ERROR:503"), 0, 3)).toBe(true);
   });
 
   it("closes stale running agent tasks when a queue attempt restarts", async () => {

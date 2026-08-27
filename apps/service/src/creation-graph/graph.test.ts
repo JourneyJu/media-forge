@@ -3,6 +3,7 @@ import type { CreationAgents } from "./agents";
 import type { CreationGraphState, ReviewReport, TitleCandidates } from "@mediaforge/contracts";
 import { createDemoCreationAgents } from "./agents";
 import { runWechatArticleGraph } from "./graph";
+import { ZodError } from "zod";
 
 function baseState(userInput: string): CreationGraphState {
   return {
@@ -52,6 +53,108 @@ function titleCandidates(title: string, selectedId = "selected"): TitleCandidate
 }
 
 describe("wechat article creation graph", () => {
+  it("completes when an outline model response contains a transposed copied section identity", async () => {
+    const agents = createDemoCreationAgents();
+    const createOutline = agents.createOutline.bind(agents);
+    agents.createOutline = async (input) => {
+      const outline = await createOutline(input);
+      const candidate = outline as NonNullable<CreationGraphState["outline"]>;
+      return {
+        ...candidate,
+        structureVersion: "model_supplied_version",
+        sections: candidate.sections.map((section, index) => ({
+          ...section,
+          sectionId: index === 0 ? "section_1_transposed" : section.sectionId
+        }))
+      };
+    };
+
+    const result = await runWechatArticleGraph(
+      baseState("请写一篇春季研学活动公众号文章，面向学生家长，重点介绍活动过程和成长价值。"),
+      { agents }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.outline?.structureVersion).toBe(result.contentPlan?.structureVersion);
+    expect(result.outline?.sections.map((section) => section.sectionId)).toEqual(
+      result.contentPlan?.sections.map((section) => section.sectionId)
+    );
+  });
+
+  it("retries only the current outline node once after a section count mismatch", async () => {
+    const agents = createDemoCreationAgents();
+    const createOutline = agents.createOutline.bind(agents);
+    const corrections: unknown[] = [];
+    let outlineCalls = 0;
+    let nodeRetries = 0;
+    agents.createOutline = async (input) => {
+      outlineCalls += 1;
+      corrections.push((input as { structureCorrection?: unknown }).structureCorrection);
+      const outline = await createOutline(input);
+      return outlineCalls === 1
+        ? { ...outline, sections: outline.sections.slice(0, -1) }
+        : outline;
+    };
+
+    const result = await runWechatArticleGraph(
+      baseState("请写一篇春季研学活动公众号文章，面向学生家长，重点介绍活动过程和成长价值。"),
+      {
+        agents,
+        observer: {
+          onNodeRetry(nodeName) {
+            if (nodeName === "outline") nodeRetries += 1;
+          }
+        }
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(outlineCalls).toBe(2);
+    expect(nodeRetries).toBe(1);
+    expect(corrections[0]).toBeUndefined();
+    expect(corrections[1]).toEqual(expect.objectContaining({
+      code: "MODEL_SECTION_COUNT_MISMATCH",
+      expectedSectionCount: 3
+    }));
+    expect(result.revisionCount).toBe(0);
+  });
+
+  it("fails the outline node after one unsuccessful structure correction", async () => {
+    const agents = createDemoCreationAgents();
+    const createOutline = agents.createOutline.bind(agents);
+    let outlineCalls = 0;
+    agents.createOutline = async (input) => {
+      outlineCalls += 1;
+      const outline = await createOutline(input);
+      return { ...outline, sections: outline.sections.slice(0, -1) };
+    };
+
+    await expect(runWechatArticleGraph(
+      baseState("请写一篇春季研学活动公众号文章，面向学生家长，重点介绍活动过程和成长价值。"),
+      { agents }
+    )).rejects.toEqual(expect.objectContaining({
+      code: "MODEL_SECTION_COUNT_MISMATCH"
+    }));
+    expect(outlineCalls).toBe(2);
+  });
+
+  it("classifies exhausted raw schema correction as a model structure failure", async () => {
+    const agents = createDemoCreationAgents();
+    let outlineCalls = 0;
+    agents.createOutline = async () => {
+      outlineCalls += 1;
+      throw new ZodError([]);
+    };
+
+    await expect(runWechatArticleGraph(
+      baseState("请写一篇春季研学活动公众号文章，面向学生家长，重点介绍活动过程和成长价值。"),
+      { agents }
+    )).rejects.toEqual(expect.objectContaining({
+      code: "MODEL_OUTPUT_SCHEMA_INVALID"
+    }));
+    expect(outlineCalls).toBe(1);
+  });
+
   it("runs the multi-agent graph to a final document", async () => {
     const userInput = [
       "帮我做一个公众号文案，要求如下：",
