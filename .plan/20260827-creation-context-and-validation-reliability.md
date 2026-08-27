@@ -762,3 +762,28 @@ AI 自审结论：通过，需人工确认后实施
 确认时间：2026-08-27
 备注：用户明确要求“开始实施”；按风险受控增量、检查点和灰度门禁执行。
 ```
+
+## 实施结果（2026-08-27）
+
+```text
+本地实施状态：完成
+自动化验证：pnpm typecheck、pnpm test、pnpm build 全部通过
+契约测试：40 passed
+认证测试：14 passed
+服务测试：125 passed
+前端测试：21 passed
+Worker：当前无独立测试文件，类型检查与构建通过
+```
+
+已完成 Task 1 至 Task 9 的代码、契约、文档和自动化回归部分：
+
+- `ResolvedCreationRequest`、`CreationSnapshot`、`CreationFailureEnvelope` 和 Working Memory 双状态已落地。
+- 首次 Turn、后续 Turn 和兼容持久化入口共用 Creation Context Assembler。
+- V1/V2、shadow、显式接管、固定 Conversation 分桶和旧 Artifact 兼容已落地。
+- 完整新需求、明确重试、仅呈现修订和歧义追问已形成互斥执行语义。
+- 仅呈现修订使用快照恢复和 mutation scope 不变量，不改写正文、标题、结构或图片语义。
+- 创意主题字面不命中降为诊断；逐字硬要求、结构、标题来源和范围越界仍为硬校验。
+- 失败尝试与成功基线隔离，前端展示解析后的操作类型和可恢复建议。
+- 模块、API、测试计划和回归用例已同步。
+
+发布阶段仍需完成：生产问题输入回放、真实 Model Gateway 调用次数/Token/耗时基线、影子分歧人工裁决，以及按 Conversation 固定分桶的 5% → 25% → 50% → 100% 灰度。上述项目未在本地实施中伪报为完成，也不阻塞代码进入部署准备状态。
