@@ -131,9 +131,13 @@ POSTGRES_PASSWORD=强密码
 MINIO_ROOT_PASSWORD=强密码，至少 16 位
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=初始管理员强密码
 MODEL_CONFIG_ENCRYPTION_KEY=openssl rand -base64 32 的输出
+CREATION_CONTEXT_V2_MODE=shadow
+CREATION_CONTEXT_V2_PERCENT=0
 ```
 
 不要提交 `infra/docker/.env.prod`。
+
+创作上下文 V2 使用按 Conversation 固定分桶的灰度开关。首次部署保持 `shadow/0`，只计算诊断而不改变执行；完成影子分歧检查后，将 `CREATION_CONTEXT_V2_MODE=all` 并按 `5 → 25 → 50 → 100` 调整百分比。同一 Conversation 的分桶结果稳定，不应按单次 Run 随机切换。
 
 ## 启动
 

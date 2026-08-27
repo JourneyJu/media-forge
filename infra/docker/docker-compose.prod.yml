@@ -94,6 +94,8 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       MODEL_MODE: ${MODEL_MODE:?MODEL_MODE must be explicitly configured for production}
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY}
+      CREATION_CONTEXT_V2_MODE: ${CREATION_CONTEXT_V2_MODE:-shadow}
+      CREATION_CONTEXT_V2_PERCENT: ${CREATION_CONTEXT_V2_PERCENT:-0}
     command: ["pnpm", "--filter", "@mediaforge/service", "start"]
     expose:
       - "4000"
