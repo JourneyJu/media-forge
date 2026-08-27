@@ -65,6 +65,19 @@ pnpm test
 pnpm build
 ```
 
+## 本地服务器更新流程
+
+当用户明确要求更新 `146.56.198.214` 服务器时，完成代码修改和测试后按本机私有流程执行：
+
+1. 读取 `output/server-deploy.env` 获取服务器地址、账号和远端项目目录。
+2. 本地运行最小充分验证，必要时扩大到 `pnpm.cmd typecheck`、`pnpm.cmd test`。
+3. 本地运行 `pnpm.cmd build`。
+4. 运行 `output/deploy-remote.ps1` 更新远端。
+5. 更新完成后验证 `/health` 和 `/auth/password-key`。
+6. 更新完成后删除本地构建产物。
+
+`output/` 已被 `.gitignore` 忽略。不得把服务器密码、生产 env、token 或私钥写入可提交文件。
+
 ## 完成报告
 
 Coding 完成时必须说明：
@@ -76,4 +89,3 @@ Coding 完成时必须说明：
 5. 跑了哪些验证命令。
 6. 是否有未验证项。
 7. 是否有剩余风险。
-
