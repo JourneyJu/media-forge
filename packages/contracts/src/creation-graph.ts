@@ -29,6 +29,7 @@ export const agentOutputTypeSchema = z.enum([
   "article_outline",
   "article_draft",
   "image_plan",
+  "presentation_style_decision",
   "layout_plan",
   "review_report",
   "artifact_validation",
@@ -230,6 +231,83 @@ export const materialAnalysisSchema = z.object({
 
 export type MaterialAnalysis = z.infer<typeof materialAnalysisSchema>;
 
+export const presentationSourceSchema = z.enum(["user", "content", "skill", "mixed"]);
+
+export const userPresentationConstraintsSchema = z.object({
+  rawFragments: z.array(z.string().trim().min(1).max(300)).max(20),
+  requestedColors: z.array(z.string().trim().min(1).max(40)).max(12),
+  prohibitedColors: z.array(z.string().trim().min(1).max(40)).max(12),
+  colorUsage: z.array(z.string().trim().min(1).max(200)).max(12),
+  decorationRequirements: z.array(z.string().trim().min(1).max(200)).max(12),
+  imageRequirements: z.array(z.string().trim().min(1).max(200)).max(12),
+  brandRequirements: z.array(z.string().trim().min(1).max(200)).max(12)
+}).strict();
+
+export type UserPresentationConstraints = z.infer<typeof userPresentationConstraintsSchema>;
+
+export const presentationStyleDecisionSchema = z.object({
+  schemaVersion: z.literal("presentation-style-v1"),
+  structureVersion: z.string().trim().min(1),
+  source: presentationSourceSchema,
+  confidence: z.number().min(0).max(1),
+  evidence: z.string().trim().min(1).max(500),
+  visual: z.object({
+    theme: z.enum([
+      "editorial",
+      "warm-story",
+      "stage-celebration",
+      "professional-report",
+      "practical-guide",
+      "brand-campaign",
+      "minimal-documentary"
+    ]),
+    hierarchy: z.enum(["title-led", "balanced", "section-led", "image-led"]),
+    typography: z.enum(["sans", "serif", "mixed"]),
+    density: z.enum(["compact", "balanced", "comfortable"]),
+    alignment: z.enum(["left", "center", "mixed"]),
+    whitespace: z.enum(["tight", "balanced", "generous"]),
+    sectionRhythm: z.enum(["numbered", "labelled", "timeline", "minimal", "carded"])
+  }).strict(),
+  colorDecoration: z.object({
+    colorSource: presentationSourceSchema,
+    requestedColors: z.array(z.string().trim().min(1).max(40)).max(12),
+    prohibitedColors: z.array(z.string().trim().min(1).max(40)).max(12),
+    paletteIntent: z.object({
+      primary: z.string().trim().min(1).max(40),
+      accent: z.string().trim().min(1).max(40),
+      text: z.string().trim().min(1).max(40),
+      surface: z.string().trim().min(1).max(40)
+    }).strict(),
+    brightness: z.enum(["dark", "balanced", "light"]),
+    saturation: z.enum(["low", "medium", "high"]),
+    contrast: z.enum(["low", "medium", "high"]),
+    surfaceTreatment: z.enum(["none", "card", "border", "tinted"]),
+    dividerTreatment: z.enum(["whitespace", "thin-line", "bold-line", "dotted", "graphic"]),
+    sectionMarker: z.enum(["none", "number", "label", "dot", "timeline"]),
+    ornamentLevel: z.enum(["minimal", "moderate", "rich"])
+  }).strict(),
+  imagePresentation: z.object({
+    heroStrategy: z.enum(["full-width", "framed", "after-title", "after-intro", "none"]),
+    sizeStrategy: z.enum(["full-width", "medium", "small", "narrative-role"]),
+    aspectPolicy: z.enum(["preserve", "subject-first-crop", "no-crop"]),
+    grouping: z.enum(["single", "paired", "gallery", "continuous", "text-image-alternating"]),
+    frameTreatment: z.enum(["none", "thin-border", "matte", "rounded"]),
+    captionPolicy: z.enum(["none", "short", "fact", "person"]),
+    rhythm: z.enum(["one-per-section", "focus-sections", "even", "opening-heavy"])
+  }).strict(),
+  brandPresentation: z.object({
+    prominence: z.enum(["hidden", "light", "standard", "strong"]),
+    logoPlacement: z.enum(["none", "header", "ending", "brand-module"]),
+    fixedModules: z.array(z.string().trim().min(1).max(80)).max(20),
+    brandAssets: z.array(z.string().trim().min(1).max(80)).max(20),
+    ctaStyle: z.enum(["none", "follow", "consult", "register", "purchase", "visit"]),
+    qrcodePlacement: z.enum(["none", "cta", "ending"]),
+    constraints: z.array(z.string().trim().min(1).max(200)).max(20)
+  }).strict()
+}).strict();
+
+export type PresentationStyleDecision = z.infer<typeof presentationStyleDecisionSchema>;
+
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/u);
 
 export const layoutPlanSchema = z.object({
@@ -258,7 +336,7 @@ export type LayoutPlan = z.infer<typeof layoutPlanSchema>;
 export const reviewIssueSchema = z.object({
   code: z.string().trim().min(1).max(80),
   severity: z.enum(["warning", "error"]),
-  target: z.enum(["brief", "plan", "title", "outline", "body", "image", "layout", "cta"]),
+  target: z.enum(["brief", "plan", "title", "outline", "body", "image", "presentation", "layout", "cta"]),
   instruction: z.string().trim().min(1).max(500)
 });
 
@@ -367,6 +445,7 @@ export const conversationWorkingMemorySchema = z.object({
     openingHook: z.string().trim().max(300).optional(),
     callToAction: z.string().trim().max(300).optional()
   }).optional(),
+  presentationStyleDecision: presentationStyleDecisionSchema.optional(),
   layoutPlan: layoutPlanSchema.optional(),
   draftSummary: z.object({
     artifactId: z.string().trim().min(1).optional(),
@@ -411,6 +490,7 @@ export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pi
   brief: true,
   selectedTitle: true,
   outline: true,
+  presentationStyleDecision: true,
   layoutPlan: true,
   draftSummary: true,
   materialSummary: true,
@@ -467,6 +547,8 @@ export interface CreationGraphState {
   outline?: ArticleOutline;
   draft?: ArticleDraft;
   imagePlan?: ImagePlan;
+  userPresentationConstraints?: UserPresentationConstraints;
+  presentationStyleDecision?: PresentationStyleDecision;
   layoutPlan?: LayoutPlan;
   reviewReports: ReviewReport[];
   artifactValidation?: ArtifactValidationResult;

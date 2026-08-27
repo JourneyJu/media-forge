@@ -48,6 +48,7 @@ const outputTypeByNode: Partial<Record<string, AgentOutputType>> = {
   writer: "article_draft",
   revision: "article_draft",
   image_plan: "image_plan",
+  presentation: "presentation_style_decision",
   layout: "layout_plan",
   review: "review_report",
   artifact: "artifact_validation"
@@ -62,6 +63,7 @@ const outputKeyByNode: Partial<Record<string, keyof CreationGraphState>> = {
   writer: "draft",
   revision: "draft",
   image_plan: "imagePlan",
+  presentation: "presentationStyleDecision",
   layout: "layoutPlan",
   review: "reviewReports",
   artifact: "artifactValidation"
@@ -75,6 +77,7 @@ const agentNameByNode: Record<string, string> = {
   outline: "OutlineAgent",
   writer: "WriterAgent",
   image_plan: "ImagePlannerAgent",
+  presentation: "PresentationDirectorAgent",
   layout: "LayoutAgent",
   review: "ReviewerAgent",
   revision: "RevisionAgent",
@@ -89,6 +92,7 @@ const reasoningSummaryByAgent: Record<string, string> = {
   OutlineAgent: "正在组织章节层次和叙事顺序。",
   WriterAgent: "正在依据内容计划撰写正文。",
   ImagePlannerAgent: "正在匹配段落语义与配图位置。",
+  PresentationDirectorAgent: "正在根据用户要求和内容语义确认视觉、色彩、图片与品牌呈现。",
   LayoutAgent: "正在优化移动端阅读节奏和版式。",
   ReviewerAgent: "正在检查内容相关性、深度和完整性。",
   RevisionAgent: "正在根据审校意见修订内容。",
@@ -638,7 +642,7 @@ export async function processCreationRunJob(
       payload.conversationId,
       result.qualityStatus === "warning"
         ? `已达到最大审校次数，已输出最后一版《${artifact.title}》。请根据质量提醒人工确认后再发布。`
-        : `标题、正文、配图规划和质量审校都已完成。推荐标题是《${artifact.title}》，右侧手机预览已经更新。`
+        : `标题、正文、配图规划、内容呈现和质量审校都已完成。推荐标题是《${artifact.title}》，右侧手机预览已经更新。`
     );
     await persistence.updateRun(payload.runId, "completed", "artifact");
     await appendTaskCard(persistence, payload.runId, visibleSteps, "completed", true);

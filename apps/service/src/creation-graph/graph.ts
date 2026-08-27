@@ -10,6 +10,7 @@ import type {
   ImagePlan,
   LayoutPlan,
   MaterialAnalysis,
+  PresentationStyleDecision,
   ReviewReport,
   TitleCandidates
 } from "@mediaforge/contracts";
@@ -18,6 +19,10 @@ import {
   createCreationAgents,
   type CreationAgents
 } from "./agents";
+import {
+  enforceUserPresentationConstraints,
+  extractUserPresentationConstraints
+} from "./presentation";
 import {
   assignContentPlanIdentity,
   assertDraftStructure,
@@ -69,6 +74,8 @@ const GraphAnnotation = Annotation.Root({
   outline: Annotation<ArticleOutline | undefined>(),
   draft: Annotation<ArticleDraft | undefined>(),
   imagePlan: Annotation<ImagePlan | undefined>(),
+  userPresentationConstraints: Annotation<CreationGraphState["userPresentationConstraints"] | undefined>(),
+  presentationStyleDecision: Annotation<PresentationStyleDecision | undefined>(),
   layoutPlan: Annotation<LayoutPlan | undefined>(),
   reviewReports: Annotation<ReviewReport[]>({
     reducer: (_current, update) => update,
@@ -165,6 +172,11 @@ function requireImagePlan(state: CreationGraphState): ImagePlan {
   return state.imagePlan;
 }
 
+function requirePresentationStyleDecision(state: CreationGraphState): PresentationStyleDecision {
+  if (!state.presentationStyleDecision) throw new Error("GRAPH_PRESENTATION_STYLE_DECISION_REQUIRED");
+  return state.presentationStyleDecision;
+}
+
 function requireLayoutPlan(state: CreationGraphState): LayoutPlan {
   if (!state.layoutPlan) throw new Error("GRAPH_LAYOUT_PLAN_REQUIRED");
   return state.layoutPlan;
@@ -176,7 +188,7 @@ function routeAfterClarification(state: CreationGraphState): "planner_node" | ty
 
 function routeAfterReview(
   state: CreationGraphState
-): "brief_node" | "planner_node" | "title_node" | "revision_node" | "image_plan_node" | "layout_node" | "artifact_node" | "fail_node" {
+): "brief_node" | "planner_node" | "title_node" | "revision_node" | "image_plan_node" | "presentation_node" | "layout_node" | "artifact_node" | "fail_node" {
   const report = state.reviewReports.at(-1);
   if (report?.passed) return "artifact_node";
   if (state.revisionCount >= state.maxRevisionCount) return "artifact_node";
@@ -185,6 +197,7 @@ function routeAfterReview(
   if (targets.has("plan") || targets.has("outline")) return "planner_node";
   if (targets.has("title")) return "title_node";
   if (targets.has("image")) return "image_plan_node";
+  if (targets.has("presentation")) return "presentation_node";
   if (targets.has("layout")) return "layout_node";
   return "revision_node";
 }
@@ -337,6 +350,37 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     (update) => `已规划 ${update.imagePlan?.items.length ?? 0} 个图片位置`
   );
 
+  const presentationNode = createObservedNode(
+    observer,
+    "presentation",
+    "内容呈现",
+    async (state) => {
+      const contentPlan = requireContentPlan(state);
+      const constraints = extractUserPresentationConstraints(state.userInput);
+      const presentationStyleDecision = enforceUserPresentationConstraints(
+        await agents.createPresentation({
+        userInput: state.userInput,
+        constraints,
+        brief: requireBrief(state),
+        contentPlan,
+        draft: requireDraft(state),
+        imagePlan: requireImagePlan(state),
+        materials: requireMaterials(state),
+        selectedSkills: state.selectedSkills
+        }),
+        constraints
+      );
+      if (presentationStyleDecision.structureVersion !== contentPlan.structureVersion) {
+        throw new Error("PRESENTATION_STRUCTURE_VERSION_MISMATCH");
+      }
+      return {
+        userPresentationConstraints: constraints,
+        presentationStyleDecision
+      };
+    },
+    (update) => `已确定内容呈现方向（${update.presentationStyleDecision?.source ?? "content"}）`
+  );
+
   const layoutNode = createObservedNode(
     observer,
     "layout",
@@ -348,6 +392,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         contentPlan,
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
+        presentationStyleDecision: requirePresentationStyleDecision(state),
         selectedSkills: state.selectedSkills
       }));
       assertLayoutPlanStructure(contentPlan, layoutPlan);
@@ -367,6 +412,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         contentPlan: requireContentPlan(state),
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
+        presentationStyleDecision: requirePresentationStyleDecision(state),
         layoutPlan: requireLayoutPlan(state),
         selectedSkills: state.selectedSkills
       });
@@ -389,6 +435,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
         contentPlan,
         draft: requireDraft(state),
         imagePlan: requireImagePlan(state),
+        presentationStyleDecision: requirePresentationStyleDecision(state),
         layoutPlan: requireLayoutPlan(state),
         userInput: state.userInput,
         report: state.reviewReports.at(-1)!,
@@ -453,6 +500,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     .addNode("outline_node", outlineNode)
     .addNode("writer_node", writerNode)
     .addNode("image_plan_node", imagePlanNode)
+    .addNode("presentation_node", presentationNode)
     .addNode("layout_node", layoutNode)
     .addNode("review_node", reviewNode)
     .addNode("revision_node", revisionNode)
@@ -466,10 +514,11 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     .addEdge("title_node", "outline_node")
     .addEdge("outline_node", "image_plan_node")
     .addEdge("image_plan_node", "writer_node")
-    .addEdge("writer_node", "layout_node")
+    .addEdge("writer_node", "presentation_node")
+    .addEdge("presentation_node", "layout_node")
     .addEdge("layout_node", "review_node")
     .addConditionalEdges("review_node", routeAfterReview)
-    .addEdge("revision_node", "layout_node")
+    .addEdge("revision_node", "presentation_node")
     .addEdge("artifact_node", END)
     .addEdge("fail_node", END)
     .compile();

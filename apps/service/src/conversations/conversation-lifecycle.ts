@@ -444,7 +444,7 @@ export function createConversationLifecycleService(
       workspaceId: ownerId,
       contextVersion,
       graphName: "wechat_article_creation",
-      graphVersion: "2026-08-03"
+      graphVersion: "2026-08-27"
     };
     await client.query(
       `insert into runs

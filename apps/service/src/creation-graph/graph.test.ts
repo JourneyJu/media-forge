@@ -73,6 +73,8 @@ describe("wechat article creation graph", () => {
     expect(result.outline?.sections).toHaveLength(3);
     expect(result.materials?.items).toEqual([]);
     expect(result.contentPlan?.sections).toHaveLength(3);
+    expect(result.presentationStyleDecision?.schemaVersion).toBe("presentation-style-v1");
+    expect(result.presentationStyleDecision?.structureVersion).toBe(result.contentPlan?.structureVersion);
     expect(result.layoutPlan?.theme).toBeDefined();
     expect(result.reviewReports.at(-1)?.passed).toBe(true);
     expect(result.artifactValidation?.passed).toBe(true);
@@ -435,5 +437,45 @@ describe("wechat article creation graph", () => {
     expect(reviseCalled).toBe(false);
     expect(result.draft?.title).toBe("第二版标题");
     expect(result.finalDocument?.attrs.title).toBe("第二版标题");
+  });
+
+  it("routes presentation review issues back to Presentation Director", async () => {
+    const demoAgents = createDemoCreationAgents();
+    let presentationCount = 0;
+    let reviewCount = 0;
+    let reviseCalled = false;
+    const agents: CreationAgents = {
+      ...demoAgents,
+      async createPresentation(input) {
+        presentationCount += 1;
+        return demoAgents.createPresentation(input);
+      },
+      async reviewDraft() {
+        reviewCount += 1;
+        return reviewCount === 1
+          ? reviewReport(false, [{
+              code: "PRESENTATION_COLOR_MISMATCH",
+              severity: "error",
+              target: "presentation",
+              instruction: "按用户指定颜色重新确认内容呈现。"
+            }])
+          : reviewReport(true);
+      },
+      async reviseDraft(input) {
+        reviseCalled = true;
+        return input.draft;
+      }
+    };
+
+    const result = await runWechatArticleGraph(
+      baseState("主题是春季研学活动，主色使用 #173F37，金色只做点缀，不要红色。"),
+      { agents }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(presentationCount).toBe(2);
+    expect(reviseCalled).toBe(false);
+    expect(result.presentationStyleDecision?.colorDecoration.paletteIntent.primary)
+      .toBe("#173F37");
   });
 });

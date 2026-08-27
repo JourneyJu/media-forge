@@ -7,6 +7,7 @@ import {
   imagePlanSchema,
   layoutPlanSchema,
   materialAnalysisSchema,
+  presentationStyleDecisionSchema,
   reviewReportSchema,
   titleCandidatesSchema,
   type ArticleDraft,
@@ -18,6 +19,7 @@ import {
   type ImagePlan,
   type LayoutPlan,
   type MaterialAnalysis,
+  type PresentationStyleDecision,
   type ReviewReport,
   type TitleCandidates
 } from "@mediaforge/contracts";
@@ -26,6 +28,7 @@ import {
   resolveModelGatewayConfig,
   type ModelGatewayProgressEvent
 } from "../model-gateway";
+import { createDeterministicPresentationDecision } from "./presentation";
 
 type SelectedSkills = CreationGraphState["selectedSkills"];
 
@@ -77,11 +80,23 @@ interface ImagePlanInput {
   selectedSkills?: SelectedSkills;
 }
 
+interface PresentationInput {
+  userInput: string;
+  constraints: NonNullable<CreationGraphState["userPresentationConstraints"]>;
+  brief: CreativeBrief;
+  contentPlan: ContentPlan;
+  draft: ArticleDraft;
+  imagePlan: ImagePlan;
+  materials: MaterialAnalysis;
+  selectedSkills?: SelectedSkills;
+}
+
 interface LayoutInput {
   brief: CreativeBrief;
   contentPlan: ContentPlan;
   draft: ArticleDraft;
   imagePlan: ImagePlan;
+  presentationStyleDecision: PresentationStyleDecision;
   selectedSkills?: SelectedSkills;
 }
 
@@ -103,6 +118,7 @@ export interface CreationAgents {
   createOutline(input: OutlineInput): Promise<ArticleOutline>;
   writeDraft(input: DraftInput): Promise<ArticleDraft>;
   planImages(input: ImagePlanInput): Promise<ImagePlan>;
+  createPresentation(input: PresentationInput): Promise<PresentationStyleDecision>;
   createLayout(input: LayoutInput): Promise<LayoutPlan>;
   reviewDraft(input: ReviewInput): Promise<ReviewReport>;
   reviseDraft(input: RevisionInput): Promise<ArticleDraft>;
@@ -317,23 +333,87 @@ function createDemoImagePlan(input: ImagePlanInput): ImagePlan {
   });
 }
 
+function createDemoPresentation(input: PresentationInput): PresentationStyleDecision {
+  return createDeterministicPresentationDecision({
+    structureVersion: input.contentPlan.structureVersion,
+    subject: input.brief.subject,
+    goal: input.brief.goal,
+    tone: input.brief.tone,
+    narrative: input.contentPlan.narrative,
+    callToAction: input.contentPlan.callToAction,
+    imageCount: input.imagePlan.items.length,
+    constraints: input.constraints,
+    selectedSkills: input.selectedSkills ?? []
+  });
+}
+
+function controlledHexColor(value: string, fallback: string): string {
+  if (/^#[0-9a-fA-F]{6}$/u.test(value)) return value;
+  const normalized = value.replace(/色$/u, "");
+  return {
+    米白: "#F7F2E8",
+    暖白: "#FFF9F2",
+    墨绿: "#173F37",
+    深蓝: "#24445C",
+    蓝灰: "#627C8A",
+    玫红: "#A42C5D",
+    金: "#C99A3D",
+    银: "#A7ADB2",
+    红: "#C74444",
+    橙: "#E6813B",
+    黄: "#D8AD35",
+    绿: "#28725D",
+    青: "#2D7D80",
+    蓝: "#356AA0",
+    紫: "#72548F",
+    粉: "#D985A4",
+    黑: "#20252B",
+    白: "#FFFFFF",
+    灰: "#7B838A"
+  }[normalized] ?? fallback;
+}
+
 function createDemoLayout(input: LayoutInput): LayoutPlan {
-  const celebratory = /获奖|庆祝|荣誉|舞台/u.test(input.brief.subject);
-  const skill = input.selectedSkills?.[0];
-  const primary = skill?.manifest.style.primaryColor;
+  const decision = input.presentationStyleDecision;
+  const theme = {
+    editorial: "editorial",
+    "warm-story": "story",
+    "stage-celebration": "celebration",
+    "professional-report": "report",
+    "practical-guide": "report",
+    "brand-campaign": "brand",
+    "minimal-documentary": "editorial"
+  }[decision.visual.theme] as LayoutPlan["theme"];
+  const primary = controlledHexColor(decision.colorDecoration.paletteIntent.primary, "#16745B");
+  const accent = controlledHexColor(decision.colorDecoration.paletteIntent.accent, "#E7654B");
+  const celebratory = theme === "celebration";
   return layoutPlanSchema.parse({
     structureVersion: input.contentPlan.structureVersion,
-    theme: celebratory ? "celebration" : "editorial",
+    theme,
     palette: {
-      primary: primary && /^#[0-9a-fA-F]{6}$/u.test(primary) ? primary : celebratory ? "#C51D5D" : "#16745B",
-      accent: celebratory ? "#F2B134" : "#E7654B",
-      text: "#20252B",
-      surface: "#F7F8F6"
+      primary,
+      accent,
+      text: controlledHexColor(decision.colorDecoration.paletteIntent.text, "#20252B"),
+      surface: controlledHexColor(decision.colorDecoration.paletteIntent.surface, "#F7F8F6")
     },
-    titleTreatment: celebratory ? "poster" : "left-editorial",
-    introTreatment: "highlight-panel",
-    sectionTreatment: celebratory ? "labelled" : "minimal",
-    imageTreatment: celebratory ? "full-width" : "framed",
+    titleTreatment: celebratory
+      ? "poster"
+      : decision.visual.alignment === "center"
+        ? "centered"
+        : "left-editorial",
+    introTreatment: decision.colorDecoration.surfaceTreatment === "none" ? "plain" : "highlight-panel",
+    sectionTreatment: decision.visual.sectionRhythm === "numbered"
+      ? "numbered"
+      : decision.visual.sectionRhythm === "timeline"
+        ? "timeline"
+        : decision.visual.sectionRhythm === "labelled" || decision.visual.sectionRhythm === "carded"
+          ? "labelled"
+          : "minimal",
+    imageTreatment: decision.imagePresentation.grouping === "gallery"
+      ? "gallery"
+      : decision.imagePresentation.heroStrategy === "full-width"
+        ? "full-width"
+        : "framed",
     blocks: [
       { kind: "title" },
       { kind: "intro" },
@@ -589,6 +669,7 @@ function createDemoAgents(): CreationAgents {
     async createOutline(input) { return createSemanticDemoOutline(input); },
     async writeDraft(input) { return createSemanticDemoDraft(input); },
     async planImages(input) { return createSemanticDemoImagePlan(input); },
+    async createPresentation(input) { return createDemoPresentation(input); },
     async createLayout(input) { return createDemoLayout(input); },
     async reviewDraft(input) { return createDemoReview(input); },
     async reviseDraft(input) {
@@ -689,9 +770,17 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
       schema: imagePlanSchema,
       temperature: 0.3
     }),
+    createPresentation: (input) => generate({
+      agentName: "PresentationDirectorAgent",
+      systemPrompt: "你是内容呈现总监，只决定公众号文章如何呈现，不改写正文、不改变章节结构、不重新分配图片语义。必须原样返回 ContentPlan 的 structureVersion。先执行安全与可读性约束；用户本轮明确指定的颜色、装饰、图片或品牌要求优先，用户只指定部分颜色时将其作为锚点并根据内容补齐辅助色与用途；没有用户呈现要求时，根据 Brief、ContentPlan、Draft、ImagePlan 和 MaterialAnalysis 推断。已选 Skill 的品牌资产和硬规则必须保留。只输出受控字段，禁止 HTML、CSS、脚本和任意样式属性。",
+      outputContract: '{"schemaVersion":"presentation-style-v1","structureVersion":"原样返回输入值","source":"user|content|skill|mixed","confidence":0到1数字,"evidence":"string","visual":{"theme":"editorial|warm-story|stage-celebration|professional-report|practical-guide|brand-campaign|minimal-documentary","hierarchy":"title-led|balanced|section-led|image-led","typography":"sans|serif|mixed","density":"compact|balanced|comfortable","alignment":"left|center|mixed","whitespace":"tight|balanced|generous","sectionRhythm":"numbered|labelled|timeline|minimal|carded"},"colorDecoration":{"colorSource":"user|content|skill|mixed","requestedColors":["string"],"prohibitedColors":["string"],"paletteIntent":{"primary":"string","accent":"string","text":"string","surface":"string"},"brightness":"dark|balanced|light","saturation":"low|medium|high","contrast":"low|medium|high","surfaceTreatment":"none|card|border|tinted","dividerTreatment":"whitespace|thin-line|bold-line|dotted|graphic","sectionMarker":"none|number|label|dot|timeline","ornamentLevel":"minimal|moderate|rich"},"imagePresentation":{"heroStrategy":"full-width|framed|after-title|after-intro|none","sizeStrategy":"full-width|medium|small|narrative-role","aspectPolicy":"preserve|subject-first-crop|no-crop","grouping":"single|paired|gallery|continuous|text-image-alternating","frameTreatment":"none|thin-border|matte|rounded","captionPolicy":"none|short|fact|person","rhythm":"one-per-section|focus-sections|even|opening-heavy"},"brandPresentation":{"prominence":"hidden|light|standard|strong","logoPlacement":"none|header|ending|brand-module","fixedModules":["string"],"brandAssets":["string"],"ctaStyle":"none|follow|consult|register|purchase|visit","qrcodePlacement":"none|cta|ending","constraints":["string"]}}',
+      input,
+      schema: presentationStyleDecisionSchema,
+      temperature: 0.3
+    }),
     createLayout: (input) => generate({
       agentName: "LayoutAgent",
-      systemPrompt: "根据当前主题、内容密度、已经确定的图片计划和 Skill 生成受控 LayoutPlan。必须原样返回 ContentPlan 的 structureVersion；section block 和章节 image block 必须引用输入中存在的 sectionId，并保留派生 sectionIndex。版式只负责视觉呈现，不重新决定图片语义归属；image block 的 assetRef 应来自 ImagePlan。只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
+      systemPrompt: "把 PresentationStyleDecision 编译为受控 LayoutPlan，不再自行选择主题、颜色、装饰、图片呈现或品牌策略。必须原样返回 ContentPlan 的 structureVersion；section block 和章节 image block 必须引用输入中存在的 sectionId，并保留派生 sectionIndex。图片语义归属来自 ImagePlan。只使用 schema 白名单，不得输出 HTML、CSS、脚本或事件属性。",
       outputContract: '{"structureVersion":"原样返回输入值","theme":"editorial|celebration|story|report|brand","palette":{"primary":"#RRGGBB","accent":"#RRGGBB","text":"#RRGGBB","surface":"#RRGGBB"},"titleTreatment":"centered|left-editorial|poster","introTreatment":"plain|quote|highlight-panel","sectionTreatment":"numbered|labelled|minimal|timeline","imageTreatment":"full-width|framed|gallery","blocks":[至少2项{"kind":"title|intro|section|image|quote|brand|cta","sectionId?":"章节块必须引用输入中的章节ID","sectionIndex?":0到9整数,"assetRef?":"string"}]}',
       input,
       schema: layoutPlanSchema,
@@ -699,8 +788,8 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     reviewDraft: (input) => generate({
       agentName: "ReviewerAgent",
-      systemPrompt: "审校主题一致性、用户要求覆盖、内容深度、素材匹配、Skill 合规、版式适配、微信阅读和事实风险。发现旧主题、错图或套用旧版式时必须 passed=false，并把 target 指向 brief、plan、body、image 或 layout。",
-      outputContract: '{"passed":true或false,"scores":{"story":0到100数字,"commercial":0到100数字,"audienceFit":0到100数字,"naturalness":0到100数字,"wechatReadability":0到100数字,"factualRisk":0到100数字,"subjectAlignment":0到100数字,"requirementCoverage":0到100数字,"contentDepth":0到100数字,"layoutFit":0到100数字},"issues":[{"code":"string","severity":"warning|error","target":"brief|plan|title|outline|body|image|layout|cta","instruction":"string"}]}',
+      systemPrompt: "审校主题一致性、用户要求覆盖、内容深度、素材匹配、Skill 合规、内容呈现决策、版式适配、微信阅读和事实风险。呈现策略不符合用户颜色或内容语义时 target=presentation；策略正确但版式编译错误时 target=layout。发现旧主题、错图或套用旧版式时必须 passed=false。",
+      outputContract: '{"passed":true或false,"scores":{"story":0到100数字,"commercial":0到100数字,"audienceFit":0到100数字,"naturalness":0到100数字,"wechatReadability":0到100数字,"factualRisk":0到100数字,"subjectAlignment":0到100数字,"requirementCoverage":0到100数字,"contentDepth":0到100数字,"layoutFit":0到100数字},"issues":[{"code":"string","severity":"warning|error","target":"brief|plan|title|outline|body|image|presentation|layout|cta","instruction":"string"}]}',
       input,
       schema: reviewReportSchema,
       temperature: 0.15

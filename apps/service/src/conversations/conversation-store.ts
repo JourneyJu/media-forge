@@ -415,7 +415,7 @@ export function createConversationStore(options: ConversationStoreOptions = {}) 
           workspaceId: conversation.workspaceId ?? "local-user",
           contextVersion,
           graphName: "wechat_article_creation" as const,
-          graphVersion: "2026-08-03"
+          graphVersion: "2026-08-27"
         };
         await options.persistence.saveConversation(
           conversation,

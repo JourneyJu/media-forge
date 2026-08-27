@@ -10,7 +10,10 @@ import {
   imagePlanSchema,
   intentResolutionSchema,
   materialAnalysisSchema,
-  titleCandidatesSchema
+  presentationStyleDecisionSchema,
+  reviewIssueSchema,
+  titleCandidatesSchema,
+  userPresentationConstraintsSchema
 } from "./creation-graph";
 
 describe("creation graph contracts", () => {
@@ -229,5 +232,101 @@ describe("creation graph contracts", () => {
 
     expect(draft.structureVersion).toBe("structure_1");
     expect(draft.sections[0]).toMatchObject({ sectionId: "section_1", heading: "the light on stage" });
+  });
+
+  it("preserves explicit user color anchors and prohibited colors", () => {
+    const constraints = userPresentationConstraintsSchema.parse({
+      rawFragments: ["标题使用 #173F37", "金色只用于少量点缀", "不要红色"],
+      requestedColors: ["#173F37", "金色"],
+      prohibitedColors: ["红色"],
+      colorUsage: ["#173F37 用于标题", "金色只用于少量点缀"],
+      decorationRequirements: ["减少装饰"],
+      imageRequirements: [],
+      brandRequirements: []
+    });
+
+    expect(constraints.requestedColors).toEqual(["#173F37", "金色"]);
+    expect(constraints.prohibitedColors).toEqual(["红色"]);
+  });
+
+  it("validates a versioned presentation decision with four controlled domains", () => {
+    const decision = presentationStyleDecisionSchema.parse({
+      schemaVersion: "presentation-style-v1",
+      structureVersion: "structure_1",
+      source: "mixed",
+      confidence: 0.9,
+      evidence: "用户指定深蓝，内容为克制的舞台获奖纪实。",
+      visual: {
+        theme: "stage-celebration",
+        hierarchy: "title-led",
+        typography: "mixed",
+        density: "comfortable",
+        alignment: "left",
+        whitespace: "generous",
+        sectionRhythm: "minimal"
+      },
+      colorDecoration: {
+        colorSource: "mixed",
+        requestedColors: ["深蓝"],
+        prohibitedColors: ["红色"],
+        paletteIntent: {
+          primary: "深蓝",
+          accent: "低比例暖金",
+          text: "深灰",
+          surface: "灰白"
+        },
+        brightness: "dark",
+        saturation: "low",
+        contrast: "medium",
+        surfaceTreatment: "border",
+        dividerTreatment: "thin-line",
+        sectionMarker: "none",
+        ornamentLevel: "minimal"
+      },
+      imagePresentation: {
+        heroStrategy: "full-width",
+        sizeStrategy: "narrative-role",
+        aspectPolicy: "preserve",
+        grouping: "text-image-alternating",
+        frameTreatment: "thin-border",
+        captionPolicy: "fact",
+        rhythm: "one-per-section"
+      },
+      brandPresentation: {
+        prominence: "light",
+        logoPlacement: "ending",
+        fixedModules: [],
+        brandAssets: [],
+        ctaStyle: "follow",
+        qrcodePlacement: "none",
+        constraints: []
+      }
+    });
+
+    expect(decision.structureVersion).toBe("structure_1");
+    expect(decision.colorDecoration.requestedColors).toEqual(["深蓝"]);
+    expect(decision.imagePresentation.grouping).toBe("text-image-alternating");
+  });
+
+  it("accepts presentation review targets and rejects arbitrary presentation fields", () => {
+    expect(reviewIssueSchema.parse({
+      code: "COLOR_MISMATCH",
+      severity: "error",
+      target: "presentation",
+      instruction: "保留用户指定的深蓝色。"
+    }).target).toBe("presentation");
+
+    expect(() => presentationStyleDecisionSchema.parse({
+      schemaVersion: "presentation-style-v1",
+      structureVersion: "structure_1",
+      source: "content",
+      confidence: 0.8,
+      evidence: "内容为专业报告。",
+      visual: {},
+      colorDecoration: {},
+      imagePresentation: {},
+      brandPresentation: {},
+      rawCss: "body { display: none; }"
+    })).toThrow();
   });
 });

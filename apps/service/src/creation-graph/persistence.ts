@@ -303,6 +303,7 @@ function createRunContext(
       brief: memorySnapshot.brief,
       selectedTitle: memorySnapshot.selectedTitle,
       outline: memorySnapshot.outline,
+      presentationStyleDecision: memorySnapshot.presentationStyleDecision,
       layoutPlan: memorySnapshot.layoutPlan,
       draftSummary: memorySnapshot.draftSummary,
       resourceContext,
@@ -347,6 +348,7 @@ function memoryFromGraphResult(
           callToAction: state.outline.callToAction
         }
       : previous.outline,
+    presentationStyleDecision: state.presentationStyleDecision ?? previous.presentationStyleDecision,
     layoutPlan: state.layoutPlan ?? previous.layoutPlan,
     draftSummary: state.draft
       ? {
