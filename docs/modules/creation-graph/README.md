@@ -22,7 +22,10 @@ Creation Graph 模块负责公众号创作任务的多 Agent 编排。它使用 
 | 当前 Turn 与历史隔离 | 已实现 | Run 只接收当前指令、当前资源和显式继承资源。 |
 | 结构化 ContentPlan / ArticleDraft | 已实现 | ContentPlan 和按章节 ArticleDraft 驱动内容与图片映射。 |
 | LayoutPlan 与主题化排版 | 已实现 | 受控 LayoutPlan 驱动可信 Renderer，前端直接展示 Renderer 产物。 |
-| 独立内容呈现策划 | 待实施 | Presentation Director 独立决定视觉、色彩装饰、图片呈现和品牌呈现；Layout Agent 只编译受控 LayoutPlan。 |
+| 独立内容呈现策划 | 已实现 | Presentation Director 独立决定视觉、色彩装饰、图片呈现和品牌呈现；Layout Agent 只编译受控 LayoutPlan。 |
+| 规范化创作请求 | 已实现 | V2 使用 `ResolvedCreationRequest` 固化操作、范围、约束来源、资源与内容身份，不执行拼接后的历史指令。 |
+| 安全局部修订 | 已实现 | Artifact 保存 `creationSnapshot`；仅改呈现时从 Presentation 开始并验证标题、正文、结构和图片语义不变量。 |
+| 分层失败与校验 | 已实现 | 语义覆盖、结构完整性和基础设施失败分层，失败尝试不替换成功基线。 |
 | 图片视觉分析 | 已实现 | Worker 从对象存储读取本轮图片，经多模态路由生成描述、OCR 和用途建议；失败时标记低质量素材。 |
 | Skill 品牌资源解析 | 已实现 | ImagePlan 只引用 `assetKey`，Artifact Builder 校验冻结版本并解析 Logo、二维码和 GIF。 |
 
@@ -104,16 +107,16 @@ apps/worker/
 | `outline` | Outline Agent | 生成文章结构和章节目标。 |
 | `writer` | Writer Agent | 生成结构化正文草稿。 |
 | `image_plan` | Image Planner Agent | 规划封面、正文图、组图和素材使用。 |
-| `presentation` | Presentation Director Agent | 根据用户约束、完整内容、图片语义和 Skill 生成受控 `PresentationStyleDecision`；规格 023 目标节点，待实施。 |
-| `layout` | Layout Agent | 当前根据主题、正文、素材和 Skill 生成受控 `LayoutPlan`；规格 023 实施后只负责把 `PresentationStyleDecision` 编译为 `LayoutPlan`。 |
+| `presentation` | Presentation Director Agent | 根据用户约束、完整内容、图片语义和 Skill 生成受控 `PresentationStyleDecision`。 |
+| `layout` | Layout Agent | 只负责把 `PresentationStyleDecision` 编译为受控 `LayoutPlan`。 |
 | `review` | Reviewer Agent | 检查故事性、商业表达、事实风险和微信阅读体验。 |
 | `revision` | Revision Agent | 根据审阅报告修订草稿。 |
 | `render` | Trusted WeChat Renderer | 将受控 `LayoutPlan` 映射为微信兼容 HTML；它不是自由文本 Agent。 |
 | `artifact` | Artifact Builder | 校验并保存 Artifact 和 ArticleVersion。 |
 
-## 独立内容呈现策划（目标状态）
+## 独立内容呈现策划
 
-规格 023 将内容呈现从 Layout Agent 拆为独立 `presentation` 节点：
+规格 023 已将内容呈现从 Layout Agent 拆为独立 `presentation` 节点：
 
 ```text
 ImagePlan + Writer
@@ -132,6 +135,14 @@ Presentation Director 输出版本化 `PresentationStyleDecision`，分为四个
 服务端先从最新用户 Turn 提取 `UserPresentationConstraints`。用户明确颜色是不可静默替换的视觉锚点；用户未指定颜色时，Presentation Director 根据内容目标、受众、正文情绪、信息密度、图片语义和 Skill 推断完整色彩意图。用户要求与主动选择 Skill 的品牌硬约束冲突时进入必要澄清。
 
 Presentation Director 不修改正文、标题、章节结构和图片语义归属。Layout Agent 不重新判断整体风格，只把呈现决策映射为白名单 LayoutPlan。Reviewer 的 `presentation` 问题回退 Presentation Director，`layout` 问题只回退 Layout Agent。
+
+当 `ResolvedCreationRequest.mutationScope` 仅包含 `presentation` 时，Graph 从上一版 Artifact 的 `creationSnapshot` 恢复 Brief、ContentPlan、标题、提纲、正文和 ImagePlan，只执行 Presentation、Layout、Review 与 Artifact。Artifact 前必须验证这些恢复字段逐项不变；任何越界修改以 `MUTATION_SCOPE_VIOLATION` 失败，不得创建新版本。旧 Artifact 缺少快照时不进入局部路径，而是降级到完整兼容路径。
+
+## 请求与失败边界
+
+V2 Graph 只执行 Run 创建时冻结的 `ResolvedCreationRequest`。它以当前 Turn 为唯一请求入口，并显式记录 `operation`、`mutationScope`、`contentIdentity`、用户硬约束、可继承状态和资源范围。`clarify` 请求先进入追问；追问答案更新同一个版本化请求后恢复，不重新拼接整个会话。
+
+Reviewer 按 `ContentIdentity` 返回逐项 `contentCoverage`、证据和置信度。主题词或创意主题没有逐字出现只保留为旧版诊断，不再阻断发布；只有用户明确声明的 `mustIncludeVerbatim` 缺失才是硬失败。服务端结构不变量、标题来源和 mutation scope 属于确定性完整性校验，不能交给模型猜测。失败以 `CreationFailureEnvelope` 记录阶段、类别、是否可重试和安全说明，并写入 `lastAttempt`，不会覆盖 `successfulBaseline`。
 
 ## 标题来源一致性
 
@@ -282,8 +293,10 @@ POST /runs/:id/clarifications
 - Reviewer 未通过且未达到上限时回退到对应问题节点；达到上限时，如最后草稿能通过 Artifact Builder 安全校验，仍创建 Artifact 并以 `qualityStatus=warning`、`completionReason=max_revision_reached` 完成 Run。
 - 模型长调用期间持续产生安全进度或 heartbeat，不出现无反馈等待。
 - 所有异常路径产生唯一 Run 终态，不静默结束。
-- 规格 023 实施后，用户明确颜色在 PresentationStyleDecision 和 LayoutPlan 中可追溯；无颜色时能证明呈现决策来自当前内容和素材。
-- 规格 023 实施后，风格修改只重跑 Presentation、Layout 和 Review，不改写标题、正文、章节集合或图片语义。
+- 用户明确颜色在 PresentationStyleDecision 和 LayoutPlan 中可追溯；无颜色时能证明呈现决策来自当前内容和素材。
+- 风格修改只重跑 Presentation、Layout 和 Review，不改写标题、正文、章节集合或图片语义。
+- 同一 Conversation 输入完整新需求时，不继承旧主题；歧义请求进入 clarification。
+- 失败后重试复用冻结请求，但新需求不会被失败尝试或成功基线覆盖。
 
 ## 实施路由
 
@@ -295,7 +308,9 @@ POST /runs/:id/clarifications
 - 结构化渲染决策：`docs/adr/010-structured-content-and-layout-plan.md`
 - 独立内容呈现策划规格：`docs/specs/023-independent-presentation-director.md`
 - 独立内容呈现决策：`docs/adr/016-independent-presentation-director.md`
-- 当前 L 级计划：`.plan/20260727-langgraph-multi-agent-production-completion.md`
+- 规范化创作请求与分层校验：`docs/adr/017-canonical-creation-request-and-validation-layers.md`
+- 上下文与校验可靠性规格：`docs/specs/024-creation-context-and-validation-reliability.md`
+- 当前 L 级计划：`.plan/20260827-creation-context-and-validation-reliability.md`
 
 ## Agent 分析动态旁路
 

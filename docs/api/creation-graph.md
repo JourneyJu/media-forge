@@ -2,7 +2,7 @@
 
 ## 实施状态
 
-本文件描述多 Agent API 的当前能力和会话生命周期重构后的目标入口。Conversation Run 已使用 `queued + BullMQ Worker`，任务、输出、事件和追问恢复均已接入 PostgreSQL；Run 改由原子 Turn 创建仍待规格 007 实施。SSE 使用 PostgreSQL 事件回放和定时补查，Redis Pub/Sub 通知属于后续延迟优化。
+本文件描述多 Agent API 的当前能力。Conversation Run 已由原子 Turn 创建并使用 `queued + BullMQ Worker`，任务、输出、事件和追问恢复均接入 PostgreSQL。SSE 使用 PostgreSQL 事件回放和定时补查，Redis Pub/Sub 通知属于后续延迟优化。
 
 目标实现见 `docs/specs/006-langgraph-multi-agent-production-completion.md`。
 
@@ -50,6 +50,9 @@ Creation Graph 是后端内部多 Agent 编排模块。普通前端主要使用 
 - `creationMode` 目标枚举为 `auto|new|revise|continue`；显式值优先于服务端推断。
 - `new` 默认只使用本 Turn 的 `resourceIds`；旧资源必须通过 `inheritedResourceIds` 显式选择。
 - 服务端不得把历史用户消息拼接为当前 Run 的原始指令。
+- V2 `graph_runs.context_json` 必须携带 `schemaVersion=2` 和冻结的 `resolvedRequest`；Worker 不重新解析用户意图。
+- `resolvedRequest` 记录 `operation`、`mutationScope`、`contentIdentity`、逐字硬要求、资源范围、约束来源和可复用基线。
+- 仅改内容呈现时必须有上一版 `creationSnapshot`；旧 Artifact 缺少快照时使用完整兼容路径。
 
 ## `GET /runs/:runId/events`
 
@@ -192,9 +195,9 @@ data: {"runId":"run_1","stepId":"task_1","agentName":"MaterialAgent","sequence":
 
 `AgentOutput.type` 已包含 `material_summary`、`content_plan` 和 `layout_plan`。`layout_plan` 只能包含受控设计令牌和模块引用，不得包含 raw HTML、CSS 或脚本。
 
-### Presentation Director 目标契约（规格 023，待实施）
+### Presentation Director 契约（规格 023，已实施）
 
-规格 023 实施后新增 `AgentOutput.type=presentation_style_decision`。该输出位于 ArticleDraft 和 ImagePlan 之后、LayoutPlan 之前，并至少包含：
+`AgentOutput.type=presentation_style_decision` 位于 ArticleDraft 和 ImagePlan 之后、LayoutPlan 之前，并至少包含：
 
 ```json
 {
@@ -278,8 +281,34 @@ Material 节点会对本轮图片调用 `multimodal_generation` 路由，结构�
 | `LAYOUT_PRESENTATION_MISMATCH` | 422 | 目标错误码：LayoutPlan 未落实已确认的呈现决策。 |
 | `LAYOUT_PLAN_INVALID` | 422 | LayoutPlan 不符合白名单 schema，禁止进入 Renderer。 |
 | `ARTIFACT_VALIDATION_FAILED` | 422 | Artifact Builder 发布前校验失败，错误摘要必须包含具体 violation code，例如 `TITLE_SOURCE_INVALID`。 |
+| `REVISION_SNAPSHOT_MISSING` | 422 | 定向修订缺少可信 `creationSnapshot`；旧 Artifact 应走完整兼容路径。 |
+| `MUTATION_SCOPE_VIOLATION` | 422 | 局部修订修改了请求范围以外的标题、正文、结构或图片语义。 |
+| `VERBATIM_REQUIREMENT_MISSING` | 422 | 用户明确要求逐字保留的内容未出现在最终文章。 |
 
 `TITLE_SOURCE_INVALID` 表示最终标题不是 Title Agent `selectedId` 指向的候选标题。该错误通常说明 Review 后的 Revision 改写了标题，或标题问题没有回退到 Title Agent 重新选择标题。Run 必须 failed，不得生成 `artifact.created` 或可发布预览。
+
+创意主题或 `subject` 未在正文逐字出现不再产生硬失败。迁移期可以记录 `LEGACY_SUBJECT_MISMATCH` 诊断，但不得仅凭该诊断阻止 Artifact。语义完整性由 Reviewer 的 `contentCoverage` 检查实体、事实、观点和逐字要求；结构版本、章节引用、标题来源和 mutation scope 由服务端确定性校验。
+
+### `run.failed` 结构化失败
+
+失败事件继续提供兼容字段 `message`，并附带安全的结构化失败信息：
+
+```json
+{
+  "runId": "run_1",
+  "message": "最终内容未通过发布校验，未生成可发布预览。",
+  "failure": {
+    "code": "ARTIFACT_VALIDATION_FAILED",
+    "stage": "artifact",
+    "category": "integrity",
+    "recoverability": "revise_input",
+    "summary": "最终内容未通过发布校验，未生成可发布预览。",
+    "violations": [{ "code": "VERBATIM_REQUIREMENT_MISSING" }]
+  }
+}
+```
+
+`category` 为 `integrity|quality|provider|system`，`recoverability` 为 `retry_same|revise_input|clarify|none`。事件不得包含供应商原始错误、完整 prompt、堆栈或模型 raw output。
 
 ## Agent 分析动态事件
 

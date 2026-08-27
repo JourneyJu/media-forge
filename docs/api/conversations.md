@@ -27,6 +27,7 @@
   "content": "写一篇儿童摄影活动公众号文案，面向家长，风格温暖。",
   "uploadSessionId": "upload_session_1",
   "resourceIds": ["resource_1", "resource_2"],
+  "creationMode": "auto",
   "layoutSkillId": "auto"
 }
 ```
@@ -71,6 +72,19 @@
 请求字段与首次 Turn 相同，但 `uploadSessionId` 可选。响应返回 Message、Run 和新的 `lastInteractionAt`。
 
 Worker、Assistant 消息和 Artifact 更新不得调用该接口，也不得更新 `lastInteractionAt`。
+
+### 创作意图解析
+
+`creationMode` 为 `auto|new|revise|continue`，默认 `auto`。显式模式优先；`auto` 的服务端行为如下：
+
+| 最新 Turn | 解析结果 |
+| --- | --- |
+| 完整、自洽的新创作需求 | `new`，不继承旧主题和旧 Artifact。 |
+| 明确只改颜色、视觉、装饰、图片展示或品牌呈现 | `revise`，mutation scope 为 `presentation`。 |
+| “继续”“重新生成”“重试”等短操作指令 | 存在可复用请求时 `continue` 或重试；否则追问。 |
+| 无法可靠判断新建或修订 | `clarify`，Run 进入 `waiting_clarification`。 |
+
+服务端不得把会话历史拼成一条新指令。每个 Run 冻结版本化 `ResolvedCreationRequest`；失败后的新完整需求仍按新建处理，只有明确重试才复用上次失败请求。
 
 ## `GET /conversations`
 
