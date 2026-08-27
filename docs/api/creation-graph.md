@@ -192,6 +192,63 @@ data: {"runId":"run_1","stepId":"task_1","agentName":"MaterialAgent","sequence":
 
 `AgentOutput.type` 已包含 `material_summary`、`content_plan` 和 `layout_plan`。`layout_plan` 只能包含受控设计令牌和模块引用，不得包含 raw HTML、CSS 或脚本。
 
+### Presentation Director 目标契约（规格 023，待实施）
+
+规格 023 实施后新增 `AgentOutput.type=presentation_style_decision`。该输出位于 ArticleDraft 和 ImagePlan 之后、LayoutPlan 之前，并至少包含：
+
+```json
+{
+  "schemaVersion": "presentation-style-v1",
+  "structureVersion": "structure_1",
+  "source": "mixed",
+  "confidence": 0.9,
+  "evidence": "用户指定深蓝；当前内容为克制的舞台获奖纪实。",
+  "visual": {
+    "theme": "stage-documentary",
+    "density": "comfortable",
+    "alignment": "left",
+    "sectionRhythm": "minimal"
+  },
+  "colorDecoration": {
+    "colorSource": "mixed",
+    "requestedColors": ["深蓝"],
+    "prohibitedColors": [],
+    "paletteIntent": {
+      "primary": "深蓝",
+      "accent": "低比例暖金",
+      "surface": "灰白"
+    },
+    "ornamentLevel": "minimal"
+  },
+  "imagePresentation": {
+    "heroStrategy": "full-width",
+    "grouping": "text-image-alternating",
+    "captionPolicy": "fact"
+  },
+  "brandPresentation": {
+    "prominence": "light",
+    "logoPlacement": "ending",
+    "ctaStyle": "follow"
+  }
+}
+```
+
+示例只说明字段语义，不穷举最终 enum。实现时以 `packages/contracts` 中的 Zod schema 为唯一运行时契约。
+
+`presentation_style_decision` 不得包含：
+
+- raw HTML、CSS、JavaScript 或事件属性；
+- 对象存储内部地址或未校验资源 URL；
+- 用户完整 prompt、模型思维链或完整 Skill 指令；
+- 对正文、标题、章节集合和图片语义归属的改写。
+
+规格 023 实施后，`ReviewerIssue.target` 增加 `presentation`：
+
+- `presentation`：主题、颜色、装饰、图片展示策略或品牌呈现决策不合适，回退 Presentation Director。
+- `layout`：LayoutPlan 模块、结构引用或白名单令牌不合法，只回退 Layout Agent。
+
+用户可见步骤继续使用现有 `step.started` 和 `step.completed`，步骤名称为“内容呈现策划”。完成 payload 只包含安全摘要、theme、colorSource 和耗时，不包含原始提示词或模型推理。
+
 Material 节点会对本轮图片调用 `multimodal_generation` 路由，结构化记录场景描述、OCR、质量和建议用途。Skill 品牌资源在 RunContext 中冻结为 `assetId + assetKey + type + usage`；模型只引用 `assetKey`，最终资源地址由 Artifact Builder 按 owner 和 Skill version 的解析结果生成。
 
 安全规则：
@@ -214,6 +271,11 @@ Material 节点会对本轮图片调用 `multimodal_generation` 路由，结构�
 | `WORKER_UNAVAILABLE` | 503 | Worker 或队列不可用。 |
 | `GENERATION_MODEL_UNAVAILABLE` | 503 | 生产环境没有可用的 active 模型路由；不得回退 Demo。 |
 | `RUN_CONTEXT_INVALID` | 422 | 创作模式、当前资源或继承资源不满足目标上下文约束。 |
+| `PRESENTATION_CONSTRAINT_CONFLICT` | 409 | 目标错误码：用户呈现要求与主动选择的品牌硬约束冲突，需要澄清。 |
+| `PRESENTATION_STYLE_INVALID` | 422 | 目标错误码：PresentationStyleDecision 不符合受控 schema。 |
+| `PRESENTATION_COLOR_UNSAFE` | 422 | 目标错误码：无法在保留用户颜色锚点时满足可读性和安全规则。 |
+| `PRESENTATION_STRUCTURE_STALE` | 422 | 目标错误码：PresentationStyleDecision 的 structureVersion 已过期。 |
+| `LAYOUT_PRESENTATION_MISMATCH` | 422 | 目标错误码：LayoutPlan 未落实已确认的呈现决策。 |
 | `LAYOUT_PLAN_INVALID` | 422 | LayoutPlan 不符合白名单 schema，禁止进入 Renderer。 |
 | `ARTIFACT_VALIDATION_FAILED` | 422 | Artifact Builder 发布前校验失败，错误摘要必须包含具体 violation code，例如 `TITLE_SOURCE_INVALID`。 |
 

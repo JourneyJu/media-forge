@@ -321,3 +321,67 @@ schema 后成为 AgentOutput；浏览器收不到原始 reasoning 或残缺 JSON
 期望：前端按 `revision` 替换摘要，不拼接原文；完成时清空并收起当前步骤；
 迟到摘要被忽略；失败步骤保留最后安全摘要；重试创建新 `executionId`；
 任一路径都不阻塞 AgentOutput 和 Run 终态。
+
+## CG-046 用户指定单一颜色
+
+步骤：用户要求“整体使用深蓝色，风格克制”，生成一篇舞台获奖文章。
+
+期望：`UserPresentationConstraints` 保留深蓝和克制要求；PresentationStyleDecision 以深蓝为颜色锚点，内容只补充辅助色、背景、比例和装饰；LayoutPlan 不静默改用其他主色。
+
+## CG-047 用户指定明确色值和使用范围
+
+步骤：用户要求“标题使用 `#173F37`，金色只用于少量点缀，背景不要深色”。
+
+期望：目标色值、使用范围和背景限制可追溯到 PresentationStyleDecision 和 LayoutPlan；正文保持可读，不把金色用作大面积背景。
+
+## CG-048 用户禁用颜色
+
+步骤：用户要求“不要红色和金色”，内容主题为获奖庆典。
+
+期望：系统不因庆典主题自动选择红金方案；禁用色不进入 LayoutPlan 的主色、强调色、背景或大面积装饰；图片本身不可控的原始颜色不构成违规。
+
+## CG-049 未指定颜色时按内容推断
+
+步骤：分别生成舞台获奖、温暖成长、专业报告、实用指南和品牌宣传文章，用户不指定颜色。
+
+期望：Presentation Director 根据内容、受众、正文密度、图片 mood 和 Skill 生成有安全依据的呈现决策；五类内容不得全部落到同一视觉主题和色彩意图。
+
+## CG-050 用户颜色与 Skill 冲突
+
+前置：用户主动选择一个明确禁止紫色且要求品牌绿色的 Skill。
+
+步骤：用户要求“主色改成紫色”。
+
+期望：Graph 进入 `waiting_clarification` 并返回可理解的冲突说明；不得静默忽略用户要求或 Skill 硬约束。
+
+## CG-051 Presentation 不得改变图片语义
+
+步骤：ImagePlan 将证书图分配给荣誉章节、合影分配给结尾；Presentation Director 返回图片展示策略。
+
+期望：PresentationStyleDecision 只能定义尺寸、组合、边框和图注策略；LayoutPlan 仍保持原 `sectionId` 和语义角色，不交换两张图片。
+
+## CG-052 Presentation 与 Layout 定向回退
+
+步骤：分别让 Reviewer 返回 `target=presentation` 的颜色适配问题和 `target=layout` 的未知模块问题。
+
+期望：前者重跑 Presentation、Layout 和 Review；后者只重跑 Layout 和 Review；两者均不交给正文 Revision。
+
+## CG-053 只修改呈现风格
+
+前置：已生成包含标题、三个章节、ImagePlan、PresentationStyleDecision 和 LayoutPlan 的 Artifact。
+
+步骤：用户要求“改成低饱和蓝灰色，减少装饰，图片改为大图穿插”。
+
+期望：Graph 重跑 Presentation、Layout 和 Review；标题、正文、章节集合、`sectionId`、图片资源和图片语义归属保持不变。
+
+## CG-054 呈现决策结构版本过期
+
+步骤：Content Planner 生成新 `structureVersion` 后尝试复用旧 PresentationStyleDecision。
+
+期望：返回 `PRESENTATION_STRUCTURE_STALE` 或等价 violation；不进入 Layout、Review 或 Artifact。
+
+## CG-055 Presentation 输出安全边界
+
+步骤：模拟 Presentation Director 返回 raw HTML、CSS、脚本、对象存储内部地址、完整 prompt 或正文改写字段。
+
+期望：schema 或安全校验失败并产生 `PRESENTATION_STYLE_INVALID`；不写入合法 AgentOutput，不进入 Layout，不创建 Artifact。

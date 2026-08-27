@@ -42,6 +42,7 @@ MediaForge 是面向培训机构和本地门店的 AI 公众号内容生成与�
 | 内容 JSON | Content JSON | 可编辑的结构化文章源数据 |
 | HTML 快照 | HTML Snapshot | 历史版本可复现的公众号 HTML 结果 |
 | 排版技能包 | Layout Skill Pack | 行业、场景、结构、视觉和 prompt 的组合规则 |
+| 内容呈现决策 | PresentationStyleDecision | 独立于正文创作的受控呈现策略，描述视觉、色彩装饰、图片展示和品牌露出，并由 Layout Agent 编译为 LayoutPlan |
 | 工作区记忆 | Workspace Memory | 从用户配置和行为中总结出的长期偏好 |
 | 模型网关 | Model Gateway | 统一管理不同模型供应商和调用策略的服务层 |
 

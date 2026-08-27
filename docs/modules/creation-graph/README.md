@@ -22,6 +22,7 @@ Creation Graph 模块负责公众号创作任务的多 Agent 编排。它使用 
 | 当前 Turn 与历史隔离 | 已实现 | Run 只接收当前指令、当前资源和显式继承资源。 |
 | 结构化 ContentPlan / ArticleDraft | 已实现 | ContentPlan 和按章节 ArticleDraft 驱动内容与图片映射。 |
 | LayoutPlan 与主题化排版 | 已实现 | 受控 LayoutPlan 驱动可信 Renderer，前端直接展示 Renderer 产物。 |
+| 独立内容呈现策划 | 待实施 | Presentation Director 独立决定视觉、色彩装饰、图片呈现和品牌呈现；Layout Agent 只编译受控 LayoutPlan。 |
 | 图片视觉分析 | 已实现 | Worker 从对象存储读取本轮图片，经多模态路由生成描述、OCR 和用途建议；失败时标记低质量素材。 |
 | Skill 品牌资源解析 | 已实现 | ImagePlan 只引用 `assetKey`，Artifact Builder 校验冻结版本并解析 Logo、二维码和 GIF。 |
 
@@ -103,11 +104,34 @@ apps/worker/
 | `outline` | Outline Agent | 生成文章结构和章节目标。 |
 | `writer` | Writer Agent | 生成结构化正文草稿。 |
 | `image_plan` | Image Planner Agent | 规划封面、正文图、组图和素材使用。 |
-| `layout` | Layout Agent | 根据主题、正文、素材和 Skill 生成受控 `LayoutPlan`。 |
+| `presentation` | Presentation Director Agent | 根据用户约束、完整内容、图片语义和 Skill 生成受控 `PresentationStyleDecision`；规格 023 目标节点，待实施。 |
+| `layout` | Layout Agent | 当前根据主题、正文、素材和 Skill 生成受控 `LayoutPlan`；规格 023 实施后只负责把 `PresentationStyleDecision` 编译为 `LayoutPlan`。 |
 | `review` | Reviewer Agent | 检查故事性、商业表达、事实风险和微信阅读体验。 |
 | `revision` | Revision Agent | 根据审阅报告修订草稿。 |
 | `render` | Trusted WeChat Renderer | 将受控 `LayoutPlan` 映射为微信兼容 HTML；它不是自由文本 Agent。 |
 | `artifact` | Artifact Builder | 校验并保存 Artifact 和 ArticleVersion。 |
+
+## 独立内容呈现策划（目标状态）
+
+规格 023 将内容呈现从 Layout Agent 拆为独立 `presentation` 节点：
+
+```text
+ImagePlan + Writer
+→ Presentation Director
+→ Layout Agent
+→ Reviewer
+```
+
+Presentation Director 输出版本化 `PresentationStyleDecision`，分为四个领域：
+
+- `visual`：视觉主题、层级、字体倾向、密度、对齐、留白和章节节奏。
+- `colorDecoration`：颜色来源、用户指定色、禁用色、色彩意图、容器、分隔、章节标记和装饰密度。
+- `imagePresentation`：首图、尺寸、比例、裁切、组合、边框、图注和图片节奏。
+- `brandPresentation`：品牌露出、Logo、固定模块、品牌资源、CTA、二维码和禁忌。
+
+服务端先从最新用户 Turn 提取 `UserPresentationConstraints`。用户明确颜色是不可静默替换的视觉锚点；用户未指定颜色时，Presentation Director 根据内容目标、受众、正文情绪、信息密度、图片语义和 Skill 推断完整色彩意图。用户要求与主动选择 Skill 的品牌硬约束冲突时进入必要澄清。
+
+Presentation Director 不修改正文、标题、章节结构和图片语义归属。Layout Agent 不重新判断整体风格，只把呈现决策映射为白名单 LayoutPlan。Reviewer 的 `presentation` 问题回退 Presentation Director，`layout` 问题只回退 Layout Agent。
 
 ## 标题来源一致性
 
@@ -254,6 +278,8 @@ POST /runs/:id/clarifications
 - Reviewer 未通过且未达到上限时回退到对应问题节点；达到上限时，如最后草稿能通过 Artifact Builder 安全校验，仍创建 Artifact 并以 `qualityStatus=warning`、`completionReason=max_revision_reached` 完成 Run。
 - 模型长调用期间持续产生安全进度或 heartbeat，不出现无反馈等待。
 - 所有异常路径产生唯一 Run 终态，不静默结束。
+- 规格 023 实施后，用户明确颜色在 PresentationStyleDecision 和 LayoutPlan 中可追溯；无颜色时能证明呈现决策来自当前内容和素材。
+- 规格 023 实施后，风格修改只重跑 Presentation、Layout 和 Review，不改写标题、正文、章节集合或图片语义。
 
 ## 实施路由
 
@@ -263,6 +289,8 @@ POST /runs/:id/clarifications
 - 会话级上下文管理规格：`docs/specs/013-conversation-session-memory.md`
 - 内容与排版质量重构：`docs/specs/015-multi-agent-content-and-layout-quality.md`
 - 结构化渲染决策：`docs/adr/010-structured-content-and-layout-plan.md`
+- 独立内容呈现策划规格：`docs/specs/023-independent-presentation-director.md`
+- 独立内容呈现决策：`docs/adr/016-independent-presentation-director.md`
 - 当前 L 级计划：`.plan/20260727-langgraph-multi-agent-production-completion.md`
 
 ## Agent 分析动态旁路

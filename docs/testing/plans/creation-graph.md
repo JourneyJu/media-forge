@@ -190,3 +190,44 @@ Writer Agent 抛错
 - 降级：功能关闭、无 reasoning、超时、模型错误、Run 预算和并发上限均不影响主链路。
 - 前端：摘要按 revision 替换而非拼接，旧 execution 事件被忽略，完成自动收起，
   失败保持展开。
+
+## 独立内容呈现策划专项验证（规格 023）
+
+### 契约与安全
+
+- `UserPresentationConstraints` 只提取最新 Turn 的颜色、禁用色、使用范围、装饰、图片展示和品牌要求。
+- `PresentationStyleDecision` 必须携带当前 `structureVersion`、schema version、来源、置信度和安全 evidence。
+- visual、colorDecoration、imagePresentation 和 brandPresentation 只允许受控值。
+- Presentation 和 Layout 输出均不得包含 raw HTML、CSS、脚本、对象存储内部地址或模型思维链。
+- 历史 AgentOutput 缺少呈现决策时只读兼容，不回写历史 Artifact。
+
+### 颜色优先级
+
+- 用户明确色值、颜色名称和模糊颜色意图均可追溯到最终决策。
+- 用户只指定主色时，内容只补齐辅助色、背景、深浅和使用比例，不替换颜色锚点。
+- 用户禁用色不得成为 LayoutPlan 的主色、强调色、背景或大面积装饰。
+- 用户未指定颜色时，主题、目标、受众、正文情绪、图片 mood 和 Skill 共同决定色彩意图。
+- 用户要求与主动选择 Skill 的品牌硬约束冲突时进入 clarification，不静默覆盖。
+- 对比度无法满足时返回明确错误，不创建 Artifact。
+
+### 节点职责与回退
+
+- Presentation Director 不修改标题、正文、章节集合、`sectionId` 和图片语义归属。
+- Layout Agent 严格映射 PresentationStyleDecision，不自行改变整体主题或颜色来源。
+- Reviewer 的 `presentation` 问题回退 Presentation，`layout` 问题回退 Layout。
+- 多目标问题从最上游受影响节点重跑。
+- PresentationStyleDecision 与当前结构版本不一致时立即失败，不进入 Layout。
+
+### 增量修改
+
+- 只改颜色、装饰、视觉气质或图片展示方式时，正文和图片语义保持不变。
+- 正文局部润色且密度未显著变化时可复用原呈现决策。
+- 章节、内容类型、图片集合、Skill 或品牌资源变化时重跑正确的下游范围。
+- 已发布 ArticleVersion 和历史 snapshot 不被回写。
+
+### 观测与成本
+
+- Presentation 节点产生真实 AgentTask、AgentOutput、step 和 agent 生命周期事件。
+- 记录 prompt/schema version、模型配置、耗时、token、来源、theme、colorSource 和回退次数。
+- 安全摘要能够说明用户颜色与内容推断的组合，不暴露完整 prompt 或 Skill。
+- 新增调用受 Run deadline、取消、队列重试和唯一终态约束。
