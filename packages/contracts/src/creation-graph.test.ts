@@ -3,6 +3,7 @@ import {
   articleDraftSchema,
   articleOutlineSchema,
   contentPlanSchema,
+  creationFailureEnvelopeSchema,
   creationRunJobSchema,
   creationRunContextSchema,
   conversationWorkingMemorySchema,
@@ -11,6 +12,7 @@ import {
   intentResolutionSchema,
   materialAnalysisSchema,
   presentationStyleDecisionSchema,
+  resolvedCreationRequestSchema,
   reviewIssueSchema,
   titleCandidatesSchema,
   userPresentationConstraintsSchema
@@ -82,8 +84,106 @@ describe("creation graph contracts", () => {
     expect(context.memory.instructionMemory.recentValuableTurns).toEqual([]);
     expect(context.memory.resourceContext.materialSummary).toEqual([]);
     expect(context.creationMode).toBe("new");
+    expect(context.schemaVersion).toBeUndefined();
     expect(context.currentResourceIds).toEqual([]);
     expect(context.intentResolution).toBeUndefined();
+  });
+
+  it("validates a canonical V2 new creation request", () => {
+    const request = resolvedCreationRequestSchema.parse({
+      schemaVersion: 2,
+      operation: "new",
+      decisionSource: "user",
+      confidence: "high",
+      currentInstruction: "写一篇关于夏日阅读计划的公众号文章。",
+      mutationScope: ["content", "title", "structure", "images", "presentation"],
+      inheritance: {
+        content: "replace",
+        presentation: "replace",
+        resources: "current_only"
+      },
+      contentIdentity: {
+        topicSummary: "夏日阅读计划",
+        namedEntities: [],
+        requiredFacts: [],
+        requiredClaims: [],
+        mustIncludeVerbatim: [],
+        prohibitedClaims: []
+      },
+      provenance: [{
+        field: "contentIdentity.topicSummary",
+        source: "current_turn",
+        sourceId: "message_2"
+      }]
+    });
+    const context = creationRunContextSchema.parse({
+      schemaVersion: 2,
+      userInput: request.currentInstruction,
+      currentInstruction: request.currentInstruction,
+      resolvedRequest: request,
+      resourceIds: [],
+      skillId: "auto",
+      maxSteps: 12
+    });
+
+    expect(context.resolvedRequest?.operation).toBe("new");
+    expect(context.resolvedRequest?.contentIdentity.namedEntities).toEqual([]);
+  });
+
+  it("rejects invalid V2 inheritance and duplicate provenance", () => {
+    expect(() => resolvedCreationRequestSchema.parse({
+      schemaVersion: 2,
+      operation: "new",
+      decisionSource: "rule",
+      confidence: "medium",
+      currentInstruction: "写一个新主题。",
+      baseArtifactId: "artifact_old",
+      mutationScope: ["content"],
+      inheritance: {
+        content: "preserve",
+        presentation: "replace",
+        resources: "artifact_used"
+      },
+      contentIdentity: {
+        topicSummary: "新主题",
+        namedEntities: [],
+        requiredFacts: [],
+        requiredClaims: [],
+        mustIncludeVerbatim: [],
+        prohibitedClaims: []
+      },
+      provenance: [
+        { field: "contentIdentity.topicSummary", source: "current_turn", sourceId: "message_2" },
+        { field: "contentIdentity.topicSummary", source: "current_turn", sourceId: "message_2" }
+      ]
+    })).toThrow();
+
+    expect(() => creationRunContextSchema.parse({
+      schemaVersion: 2,
+      userInput: "继续",
+      currentInstruction: "继续",
+      resourceIds: [],
+      skillId: "auto",
+      maxSteps: 12
+    })).toThrow();
+  });
+
+  it("validates safe structured failure details", () => {
+    const failure = creationFailureEnvelopeSchema.parse({
+      code: "CONTENT_IDENTITY_MISMATCH",
+      stage: "review",
+      category: "quality",
+      recoverability: "revise_input",
+      summary: "正文遗漏一项必要事实。",
+      violations: [{
+        code: "REQUIRED_FACT_MISSING",
+        target: "contentIdentity.requiredFacts",
+        evidence: "未找到活动日期。"
+      }]
+    });
+
+    expect(failure.violations).toHaveLength(1);
+    expect(failure.recoverability).toBe("revise_input");
   });
 
   it("validates intent resolution for same-topic continuation", () => {

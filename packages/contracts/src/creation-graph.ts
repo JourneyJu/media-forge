@@ -50,8 +50,21 @@ export type AgentTaskStatus = z.infer<typeof agentTaskStatusSchema>;
 export type AgentOutputType = z.infer<typeof agentOutputTypeSchema>;
 export type CreationRunJob = z.infer<typeof creationRunJobSchema>;
 
+export const contentIdentitySchema = z.object({
+  topicSummary: z.string().trim().min(1).max(300),
+  namedEntities: z.array(z.string().trim().min(1).max(120)).max(30),
+  requiredFacts: z.array(z.string().trim().min(1).max(300)).max(30),
+  requiredClaims: z.array(z.string().trim().min(1).max(300)).max(20),
+  mustIncludeVerbatim: z.array(z.string().trim().min(1).max(300)).max(20),
+  prohibitedClaims: z.array(z.string().trim().min(1).max(300)).max(20)
+});
+
+export type ContentIdentity = z.infer<typeof contentIdentitySchema>;
+
 export const creativeBriefSchema = z.object({
   subject: z.string().trim().min(1).max(120),
+  creativeTheme: z.string().trim().min(1).max(120).optional(),
+  contentIdentity: contentIdentitySchema.optional(),
   goal: z.enum(["brand", "promotion", "event", "education", "story"]),
   audience: z.string().trim().min(1).max(200),
   contentType: z.string().trim().min(1).max(80),
@@ -427,6 +440,100 @@ export const conversationResourceContextSchema = z.object({
   materialSummary: []
 });
 
+export const creationOperationSchema = z.enum(["new", "revise", "continue", "clarify"]);
+export const creationDecisionSourceSchema = z.enum(["user", "rule", "model"]);
+export const creationMutationScopeSchema = z.enum(["content", "title", "structure", "images", "presentation"]);
+export const creationRequestProvenanceSchema = z.object({
+  field: z.string().trim().min(1).max(160),
+  source: z.enum(["current_turn", "working_memory", "artifact", "resource"]),
+  sourceId: z.string().trim().min(1).max(160)
+});
+
+export const resolvedCreationRequestSchema = z.object({
+  schemaVersion: z.literal(2),
+  operation: creationOperationSchema,
+  decisionSource: creationDecisionSourceSchema,
+  confidence: z.enum(["high", "medium", "low"]),
+  currentInstruction: z.string().trim().min(1).max(4000),
+  baseArtifactId: z.string().trim().min(1).optional(),
+  mutationScope: z.array(creationMutationScopeSchema).max(5).default([]),
+  inheritance: z.object({
+    content: z.enum(["replace", "preserve", "extend"]),
+    presentation: z.enum(["replace", "preserve"]),
+    resources: z.enum(["current_only", "explicit", "artifact_used"])
+  }),
+  contentIdentity: contentIdentitySchema,
+  provenance: z.array(creationRequestProvenanceSchema).max(100).default([]),
+  clarification: z.object({
+    reasonCode: z.string().trim().min(1).max(80),
+    question: z.string().trim().min(1).max(500)
+  }).optional()
+}).superRefine((value, context) => {
+  if (value.operation === "new" && value.baseArtifactId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["baseArtifactId"],
+      message: "new 请求不得引用历史 Artifact"
+    });
+  }
+  if (value.operation === "new" && value.inheritance.content !== "replace") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["inheritance", "content"],
+      message: "new 请求必须替换历史内容"
+    });
+  }
+  if (value.operation === "revise" && !value.baseArtifactId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["baseArtifactId"],
+      message: "revise 请求必须引用基准 Artifact"
+    });
+  }
+  if (value.operation === "revise" && value.mutationScope.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["mutationScope"],
+      message: "revise 请求必须声明修改范围"
+    });
+  }
+  if (value.operation === "clarify" && !value.clarification) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["clarification"],
+      message: "clarify 请求必须包含澄清问题"
+    });
+  }
+  const provenanceKeys = value.provenance.map((item) => `${item.field}:${item.sourceId}`);
+  if (new Set(provenanceKeys).size !== provenanceKeys.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["provenance"],
+      message: "同一字段和来源不得重复"
+    });
+  }
+});
+
+export const creationFailureEnvelopeSchema = z.object({
+  code: z.string().trim().min(1).max(80),
+  stage: z.string().trim().min(1).max(80),
+  category: z.enum(["integrity", "quality", "provider", "system"]),
+  recoverability: z.enum(["retry_same", "revise_input", "clarify", "none"]),
+  summary: z.string().trim().min(1).max(500),
+  violations: z.array(z.object({
+    code: z.string().trim().min(1).max(80),
+    target: z.string().trim().min(1).max(80),
+    evidence: z.string().trim().min(1).max(500).optional()
+  })).max(30).default([])
+});
+
+export type CreationOperation = z.infer<typeof creationOperationSchema>;
+export type CreationDecisionSource = z.infer<typeof creationDecisionSourceSchema>;
+export type CreationMutationScope = z.infer<typeof creationMutationScopeSchema>;
+export type CreationRequestProvenance = z.infer<typeof creationRequestProvenanceSchema>;
+export type ResolvedCreationRequest = z.infer<typeof resolvedCreationRequestSchema>;
+export type CreationFailureEnvelope = z.infer<typeof creationFailureEnvelopeSchema>;
+
 export const conversationWorkingMemorySchema = z.object({
   conversationId: z.string().trim().min(1),
   contextVersion: z.number().int().min(0),
@@ -464,6 +571,22 @@ export const conversationWorkingMemorySchema = z.object({
     instruction: z.string().trim().min(1).max(1000),
     createdAt: z.string().trim().min(1)
   }).optional(),
+  successfulBaseline: z.object({
+    artifactId: z.string().trim().min(1),
+    contentIdentity: contentIdentitySchema,
+    contentHash: z.string().trim().min(1).max(128).optional(),
+    sectionIds: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    imageSemanticRefs: z.array(z.string().trim().min(1).max(160)).max(50).default([]),
+    updatedAt: z.string().trim().min(1)
+  }).optional(),
+  lastAttempt: z.object({
+    runId: z.string().trim().min(1),
+    operation: creationOperationSchema,
+    mutationScope: z.array(creationMutationScopeSchema).max(5).default([]),
+    status: z.enum(["completed", "failed", "cancelled"]),
+    failure: creationFailureEnvelopeSchema.optional(),
+    updatedAt: z.string().trim().min(1)
+  }).optional(),
   lastArtifactId: z.string().trim().min(1).optional(),
   updatedAt: z.string().trim().min(1)
 });
@@ -496,14 +619,18 @@ export const creationRunContextMemorySchema = conversationWorkingMemorySchema.pi
   materialSummary: true,
   userConstraints: true,
   revisionIntent: true,
+  successfulBaseline: true,
+  lastAttempt: true,
   lastArtifactId: true
 });
 
 export const creationRunContextSchema = z.object({
+  schemaVersion: z.union([z.literal(1), z.literal(2)]).optional(),
   userInput: z.string().trim().min(1),
   resourceIds: z.array(z.string().trim().min(1)).max(100),
   currentInstruction: z.string().trim().min(1).optional(),
   intentResolution: intentResolutionSchema.optional(),
+  resolvedRequest: resolvedCreationRequestSchema.optional(),
   creationMode: creationModeSchema.exclude(["auto"]).default("new"),
   currentResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
@@ -525,6 +652,21 @@ export const creationRunContextSchema = z.object({
     materialSummary: [],
     userConstraints: []
   })
+}).superRefine((value, context) => {
+  if (value.schemaVersion === 2 && !value.resolvedRequest) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["resolvedRequest"],
+      message: "V2 RunContext 必须包含 ResolvedCreationRequest"
+    });
+  }
+  if (value.resolvedRequest && value.currentInstruction !== value.resolvedRequest.currentInstruction) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["currentInstruction"],
+      message: "RunContext 与 ResolvedCreationRequest 的本轮指令必须一致"
+    });
+  }
 });
 
 export type CreationRunContext = z.infer<typeof creationRunContextSchema>;
