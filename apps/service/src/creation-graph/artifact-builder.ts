@@ -302,13 +302,15 @@ export function buildArticleDocument(input: ArtifactBuilderInput): {
 export function buildWechatArticleResponse(
   document: ArticleDocument,
   mode: "gateway" | "local-demo",
-  layoutPlan?: LayoutPlan
+  layoutPlan?: LayoutPlan,
+  creationSnapshot?: GenerateWechatArticleResponse["creationSnapshot"]
 ): GenerateWechatArticleResponse {
   return {
     articleId: randomUUID(),
     versionId: randomUUID(),
     document,
     layoutPlan,
+    creationSnapshot,
     render: renderWechatArticle(document, layoutPlan),
     model: {
       provider: mode === "gateway" ? "configured-route" : "local",

@@ -388,6 +388,20 @@ export const completionReasonSchema = z.enum(["review_passed", "max_revision_rea
 export type QualityStatus = z.infer<typeof qualityStatusSchema>;
 export type CompletionReason = z.infer<typeof completionReasonSchema>;
 
+export const creationSnapshotSchema = z.object({
+  materials: materialAnalysisSchema,
+  brief: creativeBriefSchema,
+  contentPlan: contentPlanSchema,
+  titles: titleCandidatesSchema,
+  outline: articleOutlineSchema,
+  draft: articleDraftSchema,
+  imagePlan: imagePlanSchema,
+  presentationStyleDecision: presentationStyleDecisionSchema,
+  layoutPlan: layoutPlanSchema
+});
+
+export type CreationSnapshot = z.infer<typeof creationSnapshotSchema>;
+
 export const conversationMaterialSummarySchema = z.object({
   resourceId: z.string().trim().min(1),
   type: z.enum(["image", "document", "link", "unknown"]),
@@ -631,6 +645,7 @@ export const creationRunContextSchema = z.object({
   currentInstruction: z.string().trim().min(1).optional(),
   intentResolution: intentResolutionSchema.optional(),
   resolvedRequest: resolvedCreationRequestSchema.optional(),
+  baseSnapshot: creationSnapshotSchema.optional(),
   creationMode: creationModeSchema.exclude(["auto"]).default("new"),
   currentResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
   inheritedResourceIds: z.array(z.string().trim().min(1)).max(30).default([]),
@@ -677,6 +692,8 @@ export interface CreationGraphState {
   runId: string;
   userInput: string;
   intentResolution?: IntentResolution;
+  resolvedRequest?: ResolvedCreationRequest;
+  baseSnapshot?: CreationSnapshot;
   resourceIds: string[];
   skillId: string;
   selectedSkills: CreationRunContext["selectedSkills"];

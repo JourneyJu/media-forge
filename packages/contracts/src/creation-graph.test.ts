@@ -4,6 +4,7 @@ import {
   articleOutlineSchema,
   contentPlanSchema,
   creationFailureEnvelopeSchema,
+  creationSnapshotSchema,
   creationRunJobSchema,
   creationRunContextSchema,
   conversationWorkingMemorySchema,
@@ -184,6 +185,24 @@ describe("creation graph contracts", () => {
 
     expect(failure.violations).toHaveLength(1);
     expect(failure.recoverability).toBe("revise_input");
+  });
+
+  it("requires a complete structured snapshot for scoped revisions", () => {
+    expect(() => creationSnapshotSchema.parse({
+      brief: {
+        subject: "主题",
+        goal: "story",
+        audience: "读者",
+        contentType: "故事",
+        tone: "warm",
+        storyAngle: "叙事",
+        materialRequirements: [],
+        resourceIds: [],
+        constraints: [],
+        prohibitedContent: [],
+        skillId: "auto"
+      }
+    })).toThrow();
   });
 
   it("validates intent resolution for same-topic continuation", () => {

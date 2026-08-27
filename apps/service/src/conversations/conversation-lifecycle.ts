@@ -25,7 +25,8 @@ import type { UserSkillService } from "../user-skills/user-skill-service";
 import { extractArtifactResourceIds } from "../creation-graph/context-rebuild";
 import {
   assembleCreationRunContext,
-  creationContextV2ModeFromEnv
+  creationContextV2ModeFromEnv,
+  parseCreationSnapshot
 } from "./creation-context-assembler";
 export { effectiveRunResourceIds } from "./creation-context-assembler";
 
@@ -315,6 +316,7 @@ export function createConversationLifecycleService(
         currentMaterialSummary,
         userMessages: userMessagesResult.rows,
         artifactResourceIds,
+        baseSnapshot: parseCreationSnapshot(latestArtifactResult.rows[0]?.payload_json),
         memory,
         v2Mode: creationContextV2ModeFromEnv(),
         now: createdAt

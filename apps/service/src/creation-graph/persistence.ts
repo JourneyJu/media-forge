@@ -25,7 +25,8 @@ import { Pool, type PoolClient } from "pg";
 import { extractArtifactResourceIds } from "./context-rebuild";
 import {
   assembleCreationRunContext,
-  creationContextV2ModeFromEnv
+  creationContextV2ModeFromEnv,
+  parseCreationSnapshot
 } from "../conversations/creation-context-assembler";
 
 interface RunRow {
@@ -676,6 +677,7 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
           })),
           userMessages: userMessagesResult.rows,
           artifactResourceIds: extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json),
+          baseSnapshot: parseCreationSnapshot(latestArtifactResult.rows[0]?.payload_json),
           memory,
           v2Mode: creationContextV2ModeFromEnv(),
           now: run.createdAt

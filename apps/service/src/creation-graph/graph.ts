@@ -110,6 +110,8 @@ const GraphAnnotation = Annotation.Root({
   runId: Annotation<string>(),
   userInput: Annotation<string>(),
   intentResolution: Annotation<CreationGraphState["intentResolution"] | undefined>(),
+  resolvedRequest: Annotation<CreationGraphState["resolvedRequest"] | undefined>(),
+  baseSnapshot: Annotation<CreationGraphState["baseSnapshot"] | undefined>(),
   resourceIds: Annotation<string[]>({
     reducer: (_current, update) => update,
     default: () => []
@@ -153,11 +155,46 @@ const GraphAnnotation = Annotation.Root({
 });
 
 function requiresClarification(state: CreationGraphState): boolean {
+  if (state.resolvedRequest?.operation === "clarify") return true;
   if (state.intentResolution?.mode === "clarify") return true;
   if (state.memory?.lastArtifactId) return false;
   if (state.memory?.instructionMemory?.rebuiltContext) return false;
   if ((state.memory?.instructionMemory?.recentValuableTurns ?? []).length > 0) return false;
   return state.userInput.trim().length < 12;
+}
+
+function isPresentationOnlyRevision(state: CreationGraphState): boolean {
+  return state.resolvedRequest?.operation === "revise"
+    && state.resolvedRequest.mutationScope.length === 1
+    && state.resolvedRequest.mutationScope[0] === "presentation";
+}
+
+function routeFromStart(state: CreationGraphState): "material_node" | "clarification_node" | "presentation_node" {
+  if (state.resolvedRequest?.operation === "clarify") return "clarification_node";
+  if (!isPresentationOnlyRevision(state)) return "material_node";
+  if (
+    !state.baseSnapshot
+    || !state.materials
+    || !state.brief
+    || !state.contentPlan
+    || !state.titles
+    || !state.outline
+    || !state.draft
+    || !state.imagePlan
+  ) {
+    throw new Error("REVISION_SNAPSHOT_MISSING");
+  }
+  return "presentation_node";
+}
+
+function assertMutationScopeInvariant(state: CreationGraphState): void {
+  if (!isPresentationOnlyRevision(state) || !state.baseSnapshot) return;
+  const unchanged = ["brief", "contentPlan", "titles", "outline", "draft", "imagePlan"] as const;
+  for (const field of unchanged) {
+    if (JSON.stringify(state[field]) !== JSON.stringify(state.baseSnapshot[field])) {
+      throw new Error(`MUTATION_SCOPE_VIOLATION:${field}`);
+    }
+  }
 }
 
 function selectedTitle(titles: TitleCandidates): string {
@@ -247,6 +284,11 @@ function routeAfterReview(
   if (report?.passed) return "artifact_node";
   if (state.revisionCount >= state.maxRevisionCount) return "artifact_node";
   const targets = new Set(report?.issues.filter((issue) => issue.severity === "error").map((issue) => issue.target));
+  if (isPresentationOnlyRevision(state)) {
+    if (targets.has("presentation")) return "presentation_node";
+    if (targets.has("layout")) return "layout_node";
+    return "artifact_node";
+  }
   if (targets.has("brief")) return "brief_node";
   if (targets.has("plan") || targets.has("outline")) return "planner_node";
   if (targets.has("title")) return "title_node";
@@ -313,7 +355,20 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "clarification",
     "信息完整性检查",
     async (state) => requiresClarification(state)
-      ? {
+      ? state.resolvedRequest?.operation === "clarify" && state.resolvedRequest.clarification
+        ? {
+            clarification: {
+              reason: state.resolvedRequest.clarification.question,
+              questions: [{
+                id: state.resolvedRequest.clarification.reasonCode,
+                label: state.resolvedRequest.clarification.question,
+                required: true,
+                suggestions: ["基于上一版继续修改", "按当前提示重新创作"]
+              }]
+            },
+            status: "waiting_clarification" as const
+          }
+        : {
           clarification: {
             reason: "创作主题或目标读者信息不足，继续生成会显著影响文章方向。",
             questions: [{
@@ -547,6 +602,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     "artifact",
     "微信排版",
     async (state) => {
+      assertMutationScopeInvariant(state);
       const result = buildArticleDocument({
         userInput: state.userInput,
         brief: requireBrief(state),
@@ -597,7 +653,7 @@ export function createWechatArticleGraph(options: GraphOptions = {}) {
     .addNode("revision_node", revisionNode)
     .addNode("artifact_node", artifactNode)
     .addNode("fail_node", failNode)
-    .addEdge(START, "material_node")
+    .addConditionalEdges(START, routeFromStart)
     .addEdge("material_node", "brief_node")
     .addEdge("brief_node", "clarification_node")
     .addConditionalEdges("clarification_node", routeAfterClarification)

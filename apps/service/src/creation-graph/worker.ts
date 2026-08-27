@@ -371,21 +371,39 @@ function createInitialState(job: CreationRunJob, context: {
   userInput: string;
   currentInstruction?: string;
   intentResolution?: CreationGraphState["intentResolution"];
+  resolvedRequest?: CreationGraphState["resolvedRequest"];
+  baseSnapshot?: CreationGraphState["baseSnapshot"];
   resourceIds: string[];
   skillId: string;
   selectedSkills?: CreationGraphState["selectedSkills"];
   memory?: CreationGraphState["memory"];
 }): CreationGraphState {
+  const scopedSnapshot = context.resolvedRequest?.operation === "revise"
+    && context.resolvedRequest.mutationScope.length === 1
+    && context.resolvedRequest.mutationScope[0] === "presentation"
+    ? context.baseSnapshot
+    : undefined;
   return {
     workspaceId: job.workspaceId,
     conversationId: job.conversationId,
     runId: job.runId,
-    userInput: context.intentResolution?.effectiveInstruction ?? context.currentInstruction ?? context.userInput,
+    userInput: context.resolvedRequest?.currentInstruction ?? context.currentInstruction ?? context.userInput,
     intentResolution: context.intentResolution,
+    resolvedRequest: context.resolvedRequest,
+    baseSnapshot: context.baseSnapshot,
     resourceIds: context.resourceIds,
     skillId: context.skillId,
     selectedSkills: context.selectedSkills ?? [],
     memory: context.memory,
+    materials: scopedSnapshot?.materials,
+    brief: scopedSnapshot?.brief,
+    contentPlan: scopedSnapshot?.contentPlan,
+    titles: scopedSnapshot?.titles,
+    outline: scopedSnapshot?.outline,
+    draft: scopedSnapshot?.draft,
+    imagePlan: scopedSnapshot?.imagePlan,
+    presentationStyleDecision: scopedSnapshot?.presentationStyleDecision,
+    layoutPlan: scopedSnapshot?.layoutPlan,
     reviewReports: [],
     revisionCount: 0,
     maxRevisionCount: 2,
@@ -629,7 +647,28 @@ export async function processCreationRunJob(
     const response = buildWechatArticleResponse(
       result.finalDocument,
       process.env.MODEL_MODE === "demo" ? "local-demo" : "gateway",
-      result.layoutPlan
+      result.layoutPlan,
+      result.materials
+      && result.brief
+      && result.contentPlan
+      && result.titles
+      && result.outline
+      && result.draft
+      && result.imagePlan
+      && result.presentationStyleDecision
+      && result.layoutPlan
+        ? {
+            materials: result.materials,
+            brief: result.brief,
+            contentPlan: result.contentPlan,
+            titles: result.titles,
+            outline: result.outline,
+            draft: result.draft,
+            imagePlan: result.imagePlan,
+            presentationStyleDecision: result.presentationStyleDecision,
+            layoutPlan: result.layoutPlan
+          }
+        : undefined
     );
     if (result.qualityStatus && result.completionReason) {
       response.quality = {

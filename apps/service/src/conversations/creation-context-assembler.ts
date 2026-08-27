@@ -1,10 +1,12 @@
 import type {
   ConversationWorkingMemory,
   CreateConversationTurnRequest,
+  CreationSnapshot,
   CreationRunContext
 } from "@mediaforge/contracts";
 import {
   conversationWorkingMemorySchema,
+  creationSnapshotSchema,
   creationRunContextSchema
 } from "@mediaforge/contracts";
 import {
@@ -37,9 +39,16 @@ export interface AssembleCreationRunContextInput {
   currentMaterialSummary: ConversationWorkingMemory["resourceContext"]["materialSummary"];
   userMessages: RebuildUserMessage[];
   artifactResourceIds: string[];
+  baseSnapshot?: CreationSnapshot;
   memory: ConversationWorkingMemory;
   v2Mode?: CreationContextV2Mode;
   now?: string;
+}
+
+export function parseCreationSnapshot(value: unknown): CreationSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const parsed = creationSnapshotSchema.safeParse((value as { creationSnapshot?: unknown }).creationSnapshot);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function emptyMemory(conversationId: string, contextVersion: number, now: string): ConversationWorkingMemory {
@@ -162,6 +171,9 @@ export function assembleCreationRunContext(input: AssembleCreationRunContextInpu
     currentInstruction: input.userInput,
     intentResolution: legacyIntent,
     ...(resolvedRequest ? { resolvedRequest } : {}),
+    ...(executeV2 && creationMode === "revise" && input.baseSnapshot
+      ? { baseSnapshot: input.baseSnapshot }
+      : {}),
     creationMode,
     currentResourceIds: input.currentResourceIds,
     inheritedResourceIds: resourceContext.inheritedResourceIds,

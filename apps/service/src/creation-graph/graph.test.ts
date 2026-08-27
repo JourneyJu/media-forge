@@ -53,6 +53,121 @@ function titleCandidates(title: string, selectedId = "selected"): TitleCandidate
 }
 
 describe("wechat article creation graph", () => {
+  it("runs only presentation downstream nodes for a scoped style revision", async () => {
+    const initial = await runWechatArticleGraph(
+      baseState("请写一篇春季研学活动公众号文章，面向学生家长，重点介绍活动过程和成长价值。"),
+      { agents: createDemoCreationAgents() }
+    );
+    if (
+      !initial.materials
+      || !initial.brief
+      || !initial.contentPlan
+      || !initial.titles
+      || !initial.outline
+      || !initial.draft
+      || !initial.imagePlan
+      || !initial.presentationStyleDecision
+      || !initial.layoutPlan
+    ) throw new Error("TEST_SNAPSHOT_REQUIRED");
+    const snapshot = {
+      materials: initial.materials,
+      brief: initial.brief,
+      contentPlan: initial.contentPlan,
+      titles: initial.titles,
+      outline: initial.outline,
+      draft: initial.draft,
+      imagePlan: initial.imagePlan,
+      presentationStyleDecision: initial.presentationStyleDecision,
+      layoutPlan: initial.layoutPlan
+    };
+    const agents = createDemoCreationAgents();
+    const analyzeMaterials = agents.analyzeMaterials.bind(agents);
+    const buildBrief = agents.buildBrief.bind(agents);
+    const writeDraft = agents.writeDraft.bind(agents);
+    const createPresentation = agents.createPresentation.bind(agents);
+    const calls = { material: 0, brief: 0, writer: 0, presentation: 0 };
+    agents.analyzeMaterials = async (input) => {
+      calls.material += 1;
+      return analyzeMaterials(input);
+    };
+    agents.buildBrief = async (input) => {
+      calls.brief += 1;
+      return buildBrief(input);
+    };
+    agents.writeDraft = async (input) => {
+      calls.writer += 1;
+      return writeDraft(input);
+    };
+    agents.createPresentation = async (input) => {
+      calls.presentation += 1;
+      return createPresentation(input);
+    };
+    const state: CreationGraphState = {
+      ...baseState("换种风格重新实现"),
+      resolvedRequest: {
+        schemaVersion: 2,
+        operation: "revise",
+        decisionSource: "user",
+        confidence: "high",
+        currentInstruction: "换种风格重新实现",
+        baseArtifactId: "artifact_1",
+        mutationScope: ["presentation"],
+        inheritance: {
+          content: "preserve",
+          presentation: "replace",
+          resources: "artifact_used"
+        },
+        contentIdentity: {
+          topicSummary: snapshot.brief.subject,
+          namedEntities: [],
+          requiredFacts: [],
+          requiredClaims: [],
+          mustIncludeVerbatim: [],
+          prohibitedClaims: []
+        },
+        provenance: []
+      },
+      baseSnapshot: snapshot,
+      ...snapshot
+    };
+
+    const result = await runWechatArticleGraph(state, { agents });
+
+    expect(result.status).toBe("completed");
+    expect(calls).toEqual({ material: 0, brief: 0, writer: 0, presentation: 1 });
+    expect(result.draft).toEqual(snapshot.draft);
+    expect(result.imagePlan).toEqual(snapshot.imagePlan);
+  });
+
+  it("rejects a scoped style revision without a complete base snapshot", async () => {
+    await expect(runWechatArticleGraph({
+      ...baseState("换种风格重新实现"),
+      resolvedRequest: {
+        schemaVersion: 2,
+        operation: "revise",
+        decisionSource: "user",
+        confidence: "high",
+        currentInstruction: "换种风格重新实现",
+        baseArtifactId: "artifact_missing",
+        mutationScope: ["presentation"],
+        inheritance: {
+          content: "preserve",
+          presentation: "replace",
+          resources: "artifact_used"
+        },
+        contentIdentity: {
+          topicSummary: "既有主题",
+          namedEntities: [],
+          requiredFacts: [],
+          requiredClaims: [],
+          mustIncludeVerbatim: [],
+          prohibitedClaims: []
+        },
+        provenance: []
+      }
+    }, { agents: createDemoCreationAgents() })).rejects.toThrow("REVISION_SNAPSHOT_MISSING");
+  });
+
   it("completes when an outline model response contains a transposed copied section identity", async () => {
     const agents = createDemoCreationAgents();
     const createOutline = agents.createOutline.bind(agents);
