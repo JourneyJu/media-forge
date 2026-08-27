@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AgentOutputType,
   Artifact,
@@ -6,6 +6,7 @@ import type {
   ConversationMessage,
   ConversationResource,
   ConversationWorkingMemory,
+  CreationFailureEnvelope,
   CreationGraphState,
   CreationRun,
   CreationRunContext,
@@ -244,7 +245,7 @@ function selectedTitleFromState(state: CreationGraphState): ConversationWorkingM
   };
 }
 
-function memoryFromGraphResult(
+export function memoryFromGraphResult(
   conversationId: string,
   contextVersion: number,
   previous: ConversationWorkingMemory,
@@ -252,6 +253,16 @@ function memoryFromGraphResult(
   artifact: Artifact
 ): ConversationWorkingMemory {
   const sectionTitles = state.outline?.sections.map((section) => section.title) ?? previous.outline?.sectionTitles ?? [];
+  const contentIdentity = state.brief?.contentIdentity
+    ?? state.resolvedRequest?.contentIdentity
+    ?? {
+      topicSummary: state.brief?.creativeTheme ?? state.brief?.subject ?? "已完成的公众号创作",
+      namedEntities: [],
+      requiredFacts: [],
+      requiredClaims: [],
+      mustIncludeVerbatim: [],
+      prohibitedClaims: []
+    };
   return conversationWorkingMemorySchema.parse({
     conversationId,
     contextVersion,
@@ -306,6 +317,23 @@ function memoryFromGraphResult(
     },
     userConstraints: previous.userConstraints,
     revisionIntent: undefined,
+    successfulBaseline: {
+      artifactId: artifact.id,
+      contentIdentity,
+      ...(state.draft ? {
+        contentHash: createHash("sha256").update(JSON.stringify(state.draft)).digest("hex"),
+        sectionIds: state.draft.sections.map((section) => section.sectionId)
+      } : {}),
+      imageSemanticRefs: state.imagePlan?.items.flatMap((item) => item.resourceId ?? item.assetKey ?? []) ?? [],
+      updatedAt: now()
+    },
+    lastAttempt: {
+      runId: state.runId,
+      operation: state.resolvedRequest?.operation ?? (previous.lastArtifactId ? "revise" : "new"),
+      mutationScope: state.resolvedRequest?.mutationScope ?? [],
+      status: "completed",
+      updatedAt: now()
+    },
     lastArtifactId: artifact.id,
     updatedAt: now()
   });
@@ -387,6 +415,34 @@ function toResource(row: ResourceRow): ConversationResource {
     source: row.source,
     createdAt: row.created_at.toISOString()
   };
+}
+
+export function memoryFromFailedRun(
+  conversationId: string,
+  contextVersion: number,
+  previous: ConversationWorkingMemory,
+  input: {
+    runId: string;
+    operation: NonNullable<ConversationWorkingMemory["lastAttempt"]>["operation"];
+    mutationScope: NonNullable<ConversationWorkingMemory["lastAttempt"]>["mutationScope"];
+    failure: CreationFailureEnvelope;
+    updatedAt?: string;
+  }
+): ConversationWorkingMemory {
+  return conversationWorkingMemorySchema.parse({
+    ...previous,
+    conversationId,
+    contextVersion,
+    lastAttempt: {
+      runId: input.runId,
+      operation: input.operation,
+      mutationScope: input.mutationScope,
+      status: "failed",
+      failure: input.failure,
+      updatedAt: input.updatedAt ?? now()
+    },
+    updatedAt: input.updatedAt ?? now()
+  });
 }
 
 function toResourceSummary(row: UploadedResourceRow): ResourceSummary {
@@ -476,7 +532,8 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
        on conflict (conversation_id) do update set
          context_version = excluded.context_version,
          memory_json = excluded.memory_json,
-         updated_at = now()`,
+          updated_at = now()
+        where conversation_memories.context_version <= excluded.context_version`,
       [memory.conversationId, memory.contextVersion, JSON.stringify(memory)]
     );
   }
@@ -1009,6 +1066,23 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
       await withTransaction(async (client) => {
         const previous = await getConversationMemoryWithClient(client, conversationId, contextVersion);
         const next = memoryFromGraphResult(conversationId, contextVersion, previous, state, artifact);
+        await upsertConversationMemoryWithClient(client, next);
+      });
+    },
+
+    async updateConversationMemoryFromFailure(
+      conversationId: string,
+      contextVersion: number,
+      input: {
+        runId: string;
+        operation: NonNullable<ConversationWorkingMemory["lastAttempt"]>["operation"];
+        mutationScope: NonNullable<ConversationWorkingMemory["lastAttempt"]>["mutationScope"];
+        failure: CreationFailureEnvelope;
+      }
+    ): Promise<void> {
+      await withTransaction(async (client) => {
+        const previous = await getConversationMemoryWithClient(client, conversationId, contextVersion);
+        const next = memoryFromFailedRun(conversationId, contextVersion, previous, input);
         await upsertConversationMemoryWithClient(client, next);
       });
     },

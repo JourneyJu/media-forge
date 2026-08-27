@@ -3,6 +3,7 @@ import { Worker, type Job } from "bullmq";
 import type {
   AgentProgressPhase,
   AgentOutputType,
+  CreationFailureEnvelope,
   CreationGraphState,
   CreationRunJob,
   RunEventType
@@ -133,6 +134,34 @@ export function getCreationRunFailureMessage(error: unknown): string {
   if (message.includes("CREATION_RUN_TIMEOUT")) return "本次创作超过最长处理时间，任务已结束。";
   if (message.includes("MODEL_GATEWAY")) return "模型服务暂时无法完成生成，请稍后重试。";
   return "创作任务执行失败，未生成可发布预览。";
+}
+
+export function toCreationFailureEnvelope(error: unknown, stage: string): CreationFailureEnvelope {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const providerFailure = /aborted|aborterror|timeout|MODEL_GATEWAY/iu.test(message);
+  const integrityFailure = /ARTIFACT_VALIDATION_FAILED|STRUCTURE_GUARD|MODEL_STRUCTURE|MUTATION_SCOPE|REVISION_SNAPSHOT/iu.test(message);
+  const qualityFailure = /CONTENT_IDENTITY|REQUIRED_FACT|SUBJECT_MISMATCH/iu.test(message);
+  const violationCodes = message
+    .split(":")
+    .slice(1)
+    .flatMap((part) => part.split(","))
+    .map((part) => part.trim())
+    .filter((part) => /^[A-Z][A-Z0-9_]{2,79}$/u.test(part))
+    .slice(0, 10);
+  return {
+    code: providerFailure
+      ? "MODEL_PROVIDER_UNAVAILABLE"
+      : qualityFailure
+        ? "CONTENT_QUALITY_FAILED"
+        : integrityFailure
+          ? "CREATION_INTEGRITY_FAILED"
+          : "CREATION_RUN_FAILED",
+    stage: sanitizeAgentProgressText(stage) || "run",
+    category: providerFailure ? "provider" : qualityFailure ? "quality" : integrityFailure ? "integrity" : "system",
+    recoverability: providerFailure ? "retry_same" : qualityFailure || integrityFailure ? "revise_input" : "retry_same",
+    summary: getCreationRunFailureMessage(error),
+    violations: violationCodes.map((code) => ({ code, target: stage }))
+  };
 }
 
 export function shouldRetryCreationJob(attemptsMade: number, maxAttempts: number | undefined): boolean {
@@ -723,10 +752,22 @@ export async function processCreationRunJob(
     }
     await persistence.failRunningAgentTasks(payload.runId, error);
     await progressReporter.fail(error);
+    const failure = toCreationFailureEnvelope(error, visibleSteps.at(-1)?.id ?? "run");
+    await persistence.updateConversationMemoryFromFailure(
+      payload.conversationId,
+      payload.contextVersion,
+      {
+        runId: payload.runId,
+        operation: context.resolvedRequest?.operation ?? context.creationMode,
+        mutationScope: context.resolvedRequest?.mutationScope ?? [],
+        failure
+      }
+    );
     await persistence.updateRun(payload.runId, "failed", "failed");
     await appendTaskCard(persistence, payload.runId, visibleSteps, "failed");
     await persistence.appendEvent(payload.runId, "run.failed", {
-      message: getCreationRunFailureMessage(error),
+      message: failure.summary,
+      failure,
       ...(error instanceof StructureGuardError ? {
         structureGuard: { code: error.code, details: error.details }
       } : {}),

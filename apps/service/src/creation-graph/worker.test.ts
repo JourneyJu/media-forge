@@ -9,7 +9,8 @@ import {
   getCreationRunFailureMessage,
   sanitizeAgentProgressText,
   shouldRetryCreationError,
-  shouldRetryCreationJob
+  shouldRetryCreationJob,
+  toCreationFailureEnvelope
 } from "./worker";
 import { ModelStructureError } from "./structure-guard";
 
@@ -140,6 +141,25 @@ describe("agent progress safety", () => {
     expect(getCreationRunFailureMessage(new Error("MODEL_STRUCTURE_INVALID:MODEL_SECTION_COUNT_MISMATCH")))
       .toContain("自动纠正后仍未通过");
     expect(getCreationRunFailureMessage(new Error("secret provider detail"))).not.toContain("secret");
+  });
+
+  it("maps raw errors to bounded structured recovery guidance", () => {
+    const failure = toCreationFailureEnvelope(
+      new Error("ARTIFACT_VALIDATION_FAILED:VERBATIM_REQUIREMENT_MISSING"),
+      "artifact"
+    );
+
+    expect(failure).toMatchObject({
+      code: "CREATION_INTEGRITY_FAILED",
+      stage: "artifact",
+      category: "integrity",
+      recoverability: "revise_input"
+    });
+    expect(failure.violations).toEqual([{
+      code: "VERBATIM_REQUIREMENT_MISSING",
+      target: "artifact"
+    }]);
+    expect(JSON.stringify(failure)).not.toContain("ARTIFACT_VALIDATION_FAILED");
   });
 
   it("only emits a terminal failure after the final queue attempt", () => {
