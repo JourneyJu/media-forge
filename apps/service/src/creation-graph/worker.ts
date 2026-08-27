@@ -5,6 +5,7 @@ import type {
   AgentOutputType,
   CreationFailureEnvelope,
   CreationGraphState,
+  CreationRunContext,
   CreationRunJob,
   RunEventType
 } from "@mediaforge/contracts";
@@ -545,14 +546,27 @@ async function appendTaskCard(
   runId: string,
   steps: VisibleStep[],
   status: "queued" | "running" | "waiting_clarification" | "completed" | "failed",
-  collapsed = false
+  collapsed = false,
+  request?: CreationRunContext["resolvedRequest"]
 ): Promise<void> {
   await persistence.appendEvent(runId, "task.card.updated", {
-    title: "多个创作角色正在协作",
+    title: getCreationTaskTitle(request),
     status,
     collapsed,
     steps
   });
+}
+
+export function getCreationTaskTitle(request?: CreationRunContext["resolvedRequest"]): string {
+  if (!request) return "多个创作角色正在协作";
+  if (request.operation === "new") return "新创作 · 多个创作角色正在协作";
+  if (request.operation === "continue") return "继续扩写 · 多个创作角色正在协作";
+  if (request.operation === "clarify") return "确认创作意图";
+  if (request.mutationScope.length === 1 && request.mutationScope[0] === "presentation") {
+    return "调整呈现 · 多个创作角色正在协作";
+  }
+  if (request.mutationScope.includes("content")) return "修改正文 · 多个创作角色正在协作";
+  return "修改文章 · 多个创作角色正在协作";
 }
 
 function outputPayload(
@@ -599,7 +613,7 @@ export async function processCreationRunJob(
         stepType: nodeName,
         title
       });
-      await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+      await appendTaskCard(persistence, payload.runId, visibleSteps, "running", false, context.resolvedRequest);
       await progressReporter.start(taskId, agentNameByNode[nodeName] ?? `${nodeName} Agent`);
     },
     async onNodeRetry(nodeName) {
@@ -628,7 +642,7 @@ export async function processCreationRunJob(
         status: "succeeded",
         summary
       });
-      await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+      await appendTaskCard(persistence, payload.runId, visibleSteps, "running", false, context.resolvedRequest);
     }
   };
 
@@ -643,7 +657,7 @@ export async function processCreationRunJob(
     payload.conversationId,
     "我正在把你的需求拆成主题、读者、标题、内容结构和配图任务，多个创作角色会依次完成并相互检查。"
   );
-  await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+  await appendTaskCard(persistence, payload.runId, visibleSteps, "running", false, context.resolvedRequest);
   const heartbeat = setInterval(() => {
     void progressReporter.heartbeat().catch(() => undefined);
   }, Number(process.env.AGENT_HEARTBEAT_INTERVAL_MS ?? 5000));
@@ -667,7 +681,7 @@ export async function processCreationRunJob(
         description: result.clarification.reason,
         questions: result.clarification.questions
       });
-      await appendTaskCard(persistence, payload.runId, visibleSteps, "waiting_clarification");
+      await appendTaskCard(persistence, payload.runId, visibleSteps, "waiting_clarification", false, context.resolvedRequest);
       return result;
     }
 
@@ -733,7 +747,7 @@ export async function processCreationRunJob(
         : `标题、正文、配图规划、内容呈现和质量审校都已完成。推荐标题是《${artifact.title}》，右侧手机预览已经更新。`
     );
     await persistence.updateRun(payload.runId, "completed", "artifact");
-    await appendTaskCard(persistence, payload.runId, visibleSteps, "completed", true);
+    await appendTaskCard(persistence, payload.runId, visibleSteps, "completed", true, context.resolvedRequest);
     await persistence.appendEvent(payload.runId, "run.completed", {
       status: "completed",
       artifactId: artifact.id,
@@ -749,7 +763,7 @@ export async function processCreationRunJob(
     if (shouldRetryCreationError(error, job.attemptsMade, job.opts.attempts)) {
       await persistence.failRunningAgentTasks(payload.runId, error);
       await progressReporter.retry(job.attemptsMade + 1);
-      await appendTaskCard(persistence, payload.runId, visibleSteps, "running");
+      await appendTaskCard(persistence, payload.runId, visibleSteps, "running", false, context.resolvedRequest);
       throw error;
     }
     await persistence.failRunningAgentTasks(payload.runId, error);
@@ -767,7 +781,7 @@ export async function processCreationRunJob(
       }
     );
     await persistence.updateRun(payload.runId, "failed", "failed");
-    await appendTaskCard(persistence, payload.runId, visibleSteps, "failed");
+    await appendTaskCard(persistence, payload.runId, visibleSteps, "failed", false, context.resolvedRequest);
     await persistence.appendEvent(payload.runId, "run.failed", {
       message: failure.summary,
       failure,

@@ -121,6 +121,18 @@ function getRunFailureMessage(value: string): string {
   return value.trim() && !/[A-Z_]{3,}/u.test(value) ? value : "创作任务执行失败，未生成可发布预览。";
 }
 
+function getRunFailureFeedback(payload: Record<string, unknown>): string {
+  const summary = getRunFailureMessage(getString(payload, "message", "Agent 执行失败"));
+  const failure = payload.failure;
+  if (!failure || typeof failure !== "object" || Array.isArray(failure)) return summary;
+  const recoverability = getString(failure as Record<string, unknown>, "recoverability");
+  if (recoverability === "retry_same") return `${summary} 可以直接重新生成。`;
+  if (recoverability === "revise_input") return `${summary} 请调整提示词或明确约束后重试。`;
+  if (recoverability === "clarify") return `${summary} 请确认创作意图后继续。`;
+  if (recoverability === "none") return `${summary} 如持续出现，请联系管理员。`;
+  return summary;
+}
+
 const runEventTypes: RunEventType[] = [
   "run.created",
   "run.started",
@@ -1179,7 +1191,7 @@ export default function HomePage() {
       }
 
       if (type === "run.failed") {
-        const failureMessage = getRunFailureMessage(getString(payload, "message", "Agent 执行失败"));
+        const failureMessage = getRunFailureFeedback(payload);
         setStatus(failureMessage);
         setRunError(failureMessage);
         dispatch({ type: "run_failed", runId, message: failureMessage });

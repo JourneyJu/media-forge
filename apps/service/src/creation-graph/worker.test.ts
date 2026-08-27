@@ -6,6 +6,7 @@ import {
   closeStaleAgentTasksForAttempt,
   createAgentProgressReporter,
   enrichImageMaterials,
+  getCreationTaskTitle,
   getCreationRunFailureMessage,
   sanitizeAgentProgressText,
   shouldRetryCreationError,
@@ -119,6 +120,39 @@ describe("creation worker image material enrichment", () => {
 });
 
 describe("agent progress safety", () => {
+  it("projects the resolved operation into a user-visible task title", () => {
+    const request: NonNullable<CreationRunContext["resolvedRequest"]> = {
+      schemaVersion: 2,
+      operation: "revise",
+      decisionSource: "rule",
+      confidence: "high",
+      currentInstruction: "保留正文，只把主色改为深蓝",
+      baseArtifactId: "artifact_1",
+      mutationScope: ["presentation"],
+      inheritance: {
+        content: "preserve",
+        presentation: "replace",
+        resources: "artifact_used"
+      },
+      contentIdentity: {
+        entities: [],
+        facts: [],
+        claims: [],
+        mustIncludeVerbatim: []
+      },
+      provenance: []
+    };
+
+    expect(getCreationTaskTitle(request)).toContain("调整呈现");
+    expect(getCreationTaskTitle({
+      ...request,
+      operation: "new",
+      baseArtifactId: undefined,
+      mutationScope: [],
+      inheritance: { ...request.inheritance, content: "replace", resources: "current_only" }
+    })).toContain("新创作");
+  });
+
   it("removes sensitive lines and limits visible progress", () => {
     const result = sanitizeAgentProgressText([
       "正在比较文章结构",
