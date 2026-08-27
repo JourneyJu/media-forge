@@ -353,6 +353,14 @@ export const reviewIssueSchema = z.object({
   instruction: z.string().trim().min(1).max(500)
 });
 
+export const contentCoverageItemSchema = z.object({
+  kind: z.enum(["entity", "fact", "claim", "verbatim"]),
+  requirement: z.string().trim().min(1).max(300),
+  status: z.enum(["covered", "missing", "contradicted", "uncertain"]),
+  evidence: z.string().trim().min(1).max(500).optional(),
+  confidence: z.number().min(0).max(1)
+});
+
 export const reviewReportSchema = z.object({
   passed: z.boolean(),
   scores: z.object({
@@ -367,7 +375,8 @@ export const reviewReportSchema = z.object({
     contentDepth: z.number().min(0).max(100),
     layoutFit: z.number().min(0).max(100)
   }),
-  issues: z.array(reviewIssueSchema).max(30)
+  issues: z.array(reviewIssueSchema).max(30),
+  contentCoverage: z.array(contentCoverageItemSchema).max(100).optional()
 });
 
 export const artifactValidationResultSchema = z.object({
@@ -375,10 +384,15 @@ export const artifactValidationResultSchema = z.object({
   violations: z.array(z.object({
     code: z.string().trim().min(1).max(80),
     message: z.string().trim().min(1).max(300)
-  })).max(30)
+  })).max(30),
+  diagnostics: z.array(z.object({
+    code: z.string().trim().min(1).max(80),
+    message: z.string().trim().min(1).max(300)
+  })).max(30).optional()
 });
 
 export type ReviewIssue = z.infer<typeof reviewIssueSchema>;
+export type ContentCoverageItem = z.infer<typeof contentCoverageItemSchema>;
 export type ReviewReport = z.infer<typeof reviewReportSchema>;
 export type ArtifactValidationResult = z.infer<typeof artifactValidationResultSchema>;
 

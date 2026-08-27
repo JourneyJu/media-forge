@@ -292,6 +292,15 @@ function createDemoBrief(input: BriefInput): CreativeBrief {
     .slice(0, 12);
   return creativeBriefSchema.parse({
     subject,
+    creativeTheme: subject,
+    contentIdentity: {
+      topicSummary: subject,
+      namedEntities: [],
+      requiredFacts: [],
+      requiredClaims: [subject],
+      mustIncludeVerbatim: [],
+      prohibitedClaims: []
+    },
     goal: /获奖|活动/u.test(effectiveInput) ? "event" : /宣传|品牌/u.test(effectiveInput) ? "brand" : "story",
     audience: inferAudience(effectiveInput),
     contentType: "公众号图文",
@@ -506,8 +515,27 @@ function createDemoReview(input: ReviewInput): ReviewReport {
   if (/帮我|要求如下|我会先|执行计划|作为\s*AI/u.test(text)) {
     issues.push({ code: "PROCESS_COPY_LEAK", severity: "error" as const, target: "body" as const, instruction: "删除用户指令和 AI 过程。" });
   }
-  if (!text.includes(clip(input.brief.subject, 20))) {
-    issues.push({ code: "SUBJECT_MISMATCH", severity: "error" as const, target: "brief" as const, instruction: "正文必须围绕本轮主题重写。" });
+  const contentCoverage = [
+    ...(input.brief.contentIdentity?.namedEntities ?? []).map((requirement) => ({ kind: "entity" as const, requirement })),
+    ...(input.brief.contentIdentity?.requiredFacts ?? []).map((requirement) => ({ kind: "fact" as const, requirement })),
+    ...(input.brief.contentIdentity?.requiredClaims ?? []).map((requirement) => ({ kind: "claim" as const, requirement })),
+    ...(input.brief.contentIdentity?.mustIncludeVerbatim ?? []).map((requirement) => ({ kind: "verbatim" as const, requirement }))
+  ].map((item) => {
+    const covered = item.kind === "claim" || text.includes(item.requirement);
+    return {
+      ...item,
+      status: covered ? "covered" as const : "missing" as const,
+      ...(covered ? { evidence: item.kind === "claim" ? "正文整体叙事围绕该观点展开" : item.requirement } : {}),
+      confidence: covered ? 0.9 : 0.8
+    };
+  });
+  for (const item of contentCoverage.filter((item) => item.status === "missing")) {
+    issues.push({
+      code: item.kind === "verbatim" ? "VERBATIM_REQUIREMENT_MISSING" : "CONTENT_IDENTITY_ITEM_MISSING",
+      severity: "error" as const,
+      target: "body" as const,
+      instruction: `补充必要${item.kind}：${item.requirement}`
+    });
   }
   const passed = issues.length === 0;
   return reviewReportSchema.parse({
@@ -524,7 +552,8 @@ function createDemoReview(input: ReviewInput): ReviewReport {
       contentDepth: 86,
       layoutFit: 92
     },
-    issues
+    issues,
+    contentCoverage
   });
 }
 
@@ -796,7 +825,7 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     buildBrief: (input) => generate({
       agentName: "BriefAgent",
       systemPrompt: "将 userInput、memory.instructionMemory 的历史 rebuild 摘要和最近两条有价值原文共同提取为 CreativeBrief。本轮 userInput 表达当前意图；当它只是继续、扩写或修改时，必须保留 instructionMemory 中的原始创作需求。creationMode=new 时不得沿用旧主题；逐项保留用户约束和 Skill 规则。",
-      outputContract: '{"subject":"string","goal":"brand|promotion|event|education|story","audience":"string","contentType":"string","campaignObject?":"string","tone":"string","storyAngle":"string","materialRequirements":["string"],"resourceIds":["string"],"constraints":["string"],"prohibitedContent":["string"],"skillId":"string"}',
+      outputContract: '{"subject":"简短创意主题","creativeTheme":"用于呈现的创意主题","contentIdentity":{"topicSummary":"内容语义摘要","namedEntities":["必须准确的实体"],"requiredFacts":["必须覆盖的事实"],"requiredClaims":["必须表达的观点"],"mustIncludeVerbatim":["仅用户明确要求逐字保留的文本"],"prohibitedClaims":["禁止表达的观点"]},"goal":"brand|promotion|event|education|story","audience":"string","contentType":"string","campaignObject?":"string","tone":"string","storyAngle":"string","materialRequirements":["string"],"resourceIds":["string"],"constraints":["string"],"prohibitedContent":["string"],"skillId":"string"}',
       input,
       schema: creativeBriefSchema,
       temperature: 0.2
@@ -859,8 +888,8 @@ function createGatewayAgents(context: CreationAgentContext): CreationAgents {
     }),
     reviewDraft: (input) => generate({
       agentName: "ReviewerAgent",
-      systemPrompt: "审校主题一致性、用户要求覆盖、内容深度、素材匹配、Skill 合规、内容呈现决策、版式适配、微信阅读和事实风险。呈现策略不符合用户颜色或内容语义时 target=presentation；策略正确但版式编译错误时 target=layout。发现旧主题、错图或套用旧版式时必须 passed=false。",
-      outputContract: '{"passed":true或false,"scores":{"story":0到100数字,"commercial":0到100数字,"audienceFit":0到100数字,"naturalness":0到100数字,"wechatReadability":0到100数字,"factualRisk":0到100数字,"subjectAlignment":0到100数字,"requirementCoverage":0到100数字,"contentDepth":0到100数字,"layoutFit":0到100数字},"issues":[{"code":"string","severity":"warning|error","target":"brief|plan|title|outline|body|image|presentation|layout|cta","instruction":"string"}]}',
+      systemPrompt: "根据 Brief.contentIdentity 逐项审校实体、事实、观点和逐字要求，contentCoverage 必须为每一项返回 covered、missing、contradicted 或 uncertain，并给出正文证据和置信度。creativeTheme 是创意表达，不要求在正文逐字出现。明确遗漏或矛盾时 passed=false 并定向到责任节点；只有抽象语义不确定时使用 warning。另审校内容深度、素材匹配、Skill 合规、内容呈现、版式、微信阅读和事实风险。呈现策略不符合用户要求时 target=presentation；策略正确但版式编译错误时 target=layout。",
+      outputContract: '{"passed":true或false,"scores":{"story":0到100数字,"commercial":0到100数字,"audienceFit":0到100数字,"naturalness":0到100数字,"wechatReadability":0到100数字,"factualRisk":0到100数字,"subjectAlignment":0到100数字,"requirementCoverage":0到100数字,"contentDepth":0到100数字,"layoutFit":0到100数字},"issues":[{"code":"string","severity":"warning|error","target":"brief|plan|title|outline|body|image|presentation|layout|cta","instruction":"string"}],"contentCoverage":[{"kind":"entity|fact|claim|verbatim","requirement":"来自contentIdentity的原项","status":"covered|missing|contradicted|uncertain","evidence?":"正文证据","confidence":0到1数字}]}',
       input,
       schema: reviewReportSchema,
       temperature: 0.15

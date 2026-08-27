@@ -98,6 +98,64 @@ describe("artifact builder guard", () => {
     expect(hasSubjectCoverage(subject, "一篇关于儿童摄影自然抓拍的文章")).toBe(false);
   });
 
+  it("does not reject an abstract semantic paraphrase when legacy subject pairs are absent", () => {
+    const abstractBrief: CreativeBrief = {
+      ...brief,
+      subject: "慢，是另一种抵达",
+      creativeTheme: "慢，是另一种抵达",
+      contentIdentity: {
+        topicSummary: "术后行动不便时慢慢恢复，并感受到陌生人的善意",
+        namedEntities: [],
+        requiredFacts: ["术后步行一百米用了十分钟"],
+        requiredClaims: ["身体慢下来后看见了不同的东西"],
+        mustIncludeVerbatim: [],
+        prohibitedClaims: []
+      }
+    };
+    const result = validateArticleArtifact({
+      userInput: "写一篇个人感悟公众号文章",
+      brief: abstractBrief,
+      contentPlan,
+      titles,
+      outline,
+      draft: {
+        ...validDraft(),
+        intro: "手术后的第六天，从停车场到门诊楼不到一百米，我却走了十分钟。",
+        conclusion: "身体放缓以后，我开始留意那些从前匆匆略过的善意。"
+      },
+      imagePlan,
+      layoutPlan
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.diagnostics?.map((item) => item.code)).toContain("LEGACY_SUBJECT_MISMATCH");
+  });
+
+  it("keeps explicit verbatim requirements as an integrity guard", () => {
+    const result = validateArticleArtifact({
+      userInput: "写一篇个人感悟公众号文章",
+      brief: {
+        ...brief,
+        contentIdentity: {
+          topicSummary: brief.subject,
+          namedEntities: [],
+          requiredFacts: [],
+          requiredClaims: [],
+          mustIncludeVerbatim: ["只要我在，我一定能够帮你完成这件事情。"],
+          prohibitedClaims: []
+        }
+      },
+      contentPlan,
+      titles,
+      outline,
+      draft: validDraft(),
+      imagePlan,
+      layoutPlan
+    });
+
+    expect(result.violations.map((item) => item.code)).toContain("VERBATIM_REQUIREMENT_MISSING");
+  });
+
   it("rejects process copy and titles outside selected candidates", () => {
     const result = validateArticleArtifact({
       userInput: "帮我做一个公众号文案，要求如下",

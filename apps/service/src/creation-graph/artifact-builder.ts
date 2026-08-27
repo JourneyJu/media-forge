@@ -108,6 +108,7 @@ export function hasSubjectCoverage(subject: string, article: string): boolean {
 export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactValidationResult {
   input = normalizeArtifactInput(input);
   const violations: Array<{ code: string; message: string }> = [];
+  const diagnostics: Array<{ code: string; message: string }> = [];
   const selected = getSelectedTitle(input.titles);
   const text = articleText(input.draft);
   const normalizedPrompt = input.userInput.trim().replace(/\s+/g, " ");
@@ -129,8 +130,19 @@ export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactVa
   if (input.draft.sections.length < 3) {
     violations.push({ code: "ARTICLE_TOO_THIN", message: "正文至少需要三个有明确目的的章节" });
   }
-  if (!hasSubjectCoverage(input.brief.subject, normalizedArticle)) {
-    violations.push({ code: "SUBJECT_MISMATCH", message: "最终内容没有围绕本轮 CreativeBrief 主题" });
+  if (!hasSubjectCoverage(input.brief.creativeTheme ?? input.brief.subject, normalizedArticle)) {
+    diagnostics.push({
+      code: "LEGACY_SUBJECT_MISMATCH",
+      message: "旧字面主题校验未命中；仅作为迁移期诊断，不单独否决 Artifact"
+    });
+  }
+  for (const requiredText of input.brief.contentIdentity?.mustIncludeVerbatim ?? []) {
+    if (!normalizedArticle.includes(requiredText.trim().replace(/\s+/g, " "))) {
+      violations.push({
+        code: "VERBATIM_REQUIREMENT_MISSING",
+        message: `最终内容缺少用户明确要求保留的原文：${requiredText.slice(0, 80)}`
+      });
+    }
   }
   try {
     assertDraftStructure(input.contentPlan, input.draft);
@@ -158,7 +170,11 @@ export function validateArticleArtifact(input: ArtifactBuilderInput): ArtifactVa
     }
   }
 
-  return artifactValidationResultSchema.parse({ passed: violations.length === 0, violations });
+  return artifactValidationResultSchema.parse({
+    passed: violations.length === 0,
+    violations,
+    diagnostics
+  });
 }
 
 function textBlock(type: "paragraph" | "callout" | "quote" | "footer", text: string, attrs?: Record<string, unknown>) {
