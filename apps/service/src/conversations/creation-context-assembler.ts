@@ -1,0 +1,190 @@
+import type {
+  ConversationWorkingMemory,
+  CreateConversationTurnRequest,
+  CreationRunContext
+} from "@mediaforge/contracts";
+import {
+  conversationWorkingMemorySchema,
+  creationRunContextSchema
+} from "@mediaforge/contracts";
+import {
+  buildResourceContext,
+  rebuildInstructionMemory,
+  type RebuildUserMessage
+} from "../creation-graph/context-rebuild";
+import {
+  resolveCanonicalCreationRequest,
+  resolveConversationIntent
+} from "../creation-graph/intent-resolution";
+
+export type CreationContextV2Mode = "off" | "shadow" | "explicit" | "all";
+
+export function creationContextV2ModeFromEnv(value = process.env.CREATION_CONTEXT_V2_MODE): CreationContextV2Mode {
+  return value === "off" || value === "explicit" || value === "all" ? value : "shadow";
+}
+
+export interface AssembleCreationRunContextInput {
+  conversationId: string;
+  contextVersion: number;
+  userInput: string;
+  resourceIds: string[];
+  skillId: string;
+  selectedSkills: CreationRunContext["selectedSkills"];
+  maxSteps: number;
+  requestedCreationMode: CreateConversationTurnRequest["creationMode"];
+  currentResourceIds: string[];
+  inheritedResourceIds: string[];
+  currentMaterialSummary: ConversationWorkingMemory["resourceContext"]["materialSummary"];
+  userMessages: RebuildUserMessage[];
+  artifactResourceIds: string[];
+  memory: ConversationWorkingMemory;
+  v2Mode?: CreationContextV2Mode;
+  now?: string;
+}
+
+function emptyMemory(conversationId: string, contextVersion: number, now: string): ConversationWorkingMemory {
+  return conversationWorkingMemorySchema.parse({
+    conversationId,
+    contextVersion,
+    instructionMemory: { recentValuableTurns: [] },
+    resourceContext: {
+      currentResourceIds: [],
+      inheritedResourceIds: [],
+      artifactResourceIds: [],
+      materialSummary: []
+    },
+    materialSummary: [],
+    userConstraints: [],
+    updatedAt: now
+  });
+}
+
+export function effectiveRunResourceIds(input: {
+  creationMode: CreationRunContext["creationMode"];
+  currentResourceIds: string[];
+  inheritedResourceIds: string[];
+  artifactResourceIds: string[];
+}): string[] {
+  if (input.creationMode === "new") return [...new Set(input.currentResourceIds)];
+  return [...new Set([
+    ...input.currentResourceIds,
+    ...input.inheritedResourceIds,
+    ...(input.creationMode === "revise" ? input.artifactResourceIds : [])
+  ])];
+}
+
+function revisionTarget(
+  mutationScope: NonNullable<CreationRunContext["resolvedRequest"]>["mutationScope"]
+): NonNullable<ConversationWorkingMemory["revisionIntent"]>["target"] {
+  if (mutationScope.length !== 1) return "all";
+  switch (mutationScope[0]) {
+    case "title": return "title";
+    case "structure": return "outline";
+    case "images": return "image";
+    case "presentation": return "style";
+    case "content": return "body";
+  }
+}
+
+function shouldExecuteV2(
+  mode: CreationContextV2Mode,
+  requestedCreationMode: CreateConversationTurnRequest["creationMode"]
+): boolean {
+  return mode === "all" || (mode === "explicit" && requestedCreationMode !== "auto");
+}
+
+export function assembleCreationRunContext(input: AssembleCreationRunContextInput): CreationRunContext {
+  const now = input.now ?? new Date().toISOString();
+  const v2Mode = input.v2Mode ?? "shadow";
+  const resolvedRequest = v2Mode === "off"
+    ? undefined
+    : resolveCanonicalCreationRequest({
+        requestedCreationMode: input.requestedCreationMode,
+        currentInstruction: input.userInput,
+        currentResourceIds: input.currentResourceIds,
+        memory: input.memory,
+        userMessages: input.userMessages
+      });
+  const executeV2 = Boolean(resolvedRequest) && shouldExecuteV2(v2Mode, input.requestedCreationMode);
+  const legacyIntent = resolveConversationIntent({
+    requestedCreationMode: input.requestedCreationMode,
+    currentInstruction: input.userInput,
+    currentResourceIds: input.currentResourceIds,
+    memory: input.memory,
+    userMessages: input.userMessages
+  });
+  const resolvedMode = executeV2 ? resolvedRequest?.operation : legacyIntent.mode;
+  const creationMode: CreationRunContext["creationMode"] = resolvedMode === "clarify"
+    ? "continue"
+    : resolvedMode ?? "new";
+  const memorySnapshot = creationMode === "new"
+    ? emptyMemory(input.conversationId, input.contextVersion, now)
+    : input.memory;
+  const historyMessages = executeV2
+    ? creationMode === "new" ? [] : input.userMessages.slice(0, -1)
+    : input.userMessages;
+  const instructionMemory = rebuildInstructionMemory(historyMessages, creationMode);
+  const resourceContext = buildResourceContext({
+    currentResourceIds: input.currentResourceIds,
+    inheritedResourceIds: input.inheritedResourceIds,
+    artifactResourceIds: input.artifactResourceIds,
+    currentMaterialSummary: input.currentMaterialSummary,
+    previousMemory: memorySnapshot,
+    creationMode
+  });
+  const resourceIds = effectiveRunResourceIds({
+    creationMode,
+    currentResourceIds: input.currentResourceIds,
+    inheritedResourceIds: resourceContext.inheritedResourceIds,
+    artifactResourceIds: resourceContext.artifactResourceIds
+  });
+  const selectedResources = new Set(resourceIds);
+  const materialSummary = new Map(
+    resourceContext.materialSummary
+      .filter((item) => selectedResources.has(item.resourceId))
+      .map((item) => [item.resourceId, item])
+  );
+  for (const item of input.currentMaterialSummary) {
+    if (selectedResources.has(item.resourceId)) materialSummary.set(item.resourceId, item);
+  }
+  const revisionIntent = creationMode === "revise"
+    ? {
+        target: resolvedRequest ? revisionTarget(resolvedRequest.mutationScope) : "all" as const,
+        instruction: input.userInput.slice(0, 1000),
+        createdAt: now
+      }
+    : undefined;
+
+  return creationRunContextSchema.parse({
+    ...(executeV2 ? { schemaVersion: 2 } : {}),
+    userInput: input.userInput,
+    resourceIds,
+    currentInstruction: input.userInput,
+    intentResolution: legacyIntent,
+    ...(resolvedRequest ? { resolvedRequest } : {}),
+    creationMode,
+    currentResourceIds: input.currentResourceIds,
+    inheritedResourceIds: resourceContext.inheritedResourceIds,
+    resourceContext,
+    skillId: input.skillId,
+    selectedSkills: input.selectedSkills,
+    maxSteps: input.maxSteps,
+    contextVersion: input.contextVersion,
+    memory: {
+      instructionMemory,
+      brief: memorySnapshot.brief,
+      selectedTitle: memorySnapshot.selectedTitle,
+      outline: memorySnapshot.outline,
+      presentationStyleDecision: memorySnapshot.presentationStyleDecision,
+      layoutPlan: memorySnapshot.layoutPlan,
+      draftSummary: memorySnapshot.draftSummary,
+      resourceContext,
+      materialSummary: [...materialSummary.values()],
+      userConstraints: memorySnapshot.userConstraints,
+      successfulBaseline: memorySnapshot.successfulBaseline,
+      lastAttempt: memorySnapshot.lastAttempt,
+      lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
+      revisionIntent
+    }
+  });
+}

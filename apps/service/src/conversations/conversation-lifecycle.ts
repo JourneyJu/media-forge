@@ -9,7 +9,6 @@ import type {
   CreateConversationTurnRequest,
   CreateConversationTurnResponse,
   CreationRun,
-  CreationRunContext,
   CreationRunJob,
   DeleteConversationResponse,
   GetConversationResponse,
@@ -18,21 +17,17 @@ import type {
   ResourceSummary
 } from "@mediaforge/contracts";
 import {
-  conversationWorkingMemorySchema,
-  creationRunContextSchema
+  conversationWorkingMemorySchema
 } from "@mediaforge/contracts";
 import type { GenerateWechatArticleResponse } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
 import type { UserSkillService } from "../user-skills/user-skill-service";
+import { extractArtifactResourceIds } from "../creation-graph/context-rebuild";
 import {
-  buildResourceContext,
-  extractArtifactResourceIds,
-  rebuildInstructionMemory,
-  type RebuildUserMessage
-} from "../creation-graph/context-rebuild";
-import {
-  resolveConversationIntent
-} from "../creation-graph/intent-resolution";
+  assembleCreationRunContext,
+  creationContextV2ModeFromEnv
+} from "./creation-context-assembler";
+export { effectiveRunResourceIds } from "./creation-context-assembler";
 
 interface ConversationRow {
   id: string;
@@ -209,120 +204,6 @@ function normalizeMemory(
   });
 }
 
-function revisionTarget(input: string): NonNullable<ConversationWorkingMemory["revisionIntent"]>["target"] {
-  if (/标题|题目/u.test(input)) return "title";
-  if (/结构|提纲|章节|段落顺序/u.test(input)) return "outline";
-  if (/图片|配图|封面|素材/u.test(input)) return "image";
-  if (/语气|风格|口吻|温暖|正式|自然/u.test(input)) return "style";
-  if (/第三段|正文|内容|加上|删掉|补充/u.test(input)) return "body";
-  return "all";
-}
-
-export function effectiveRunResourceIds(input: {
-  creationMode: CreationRunContext["creationMode"];
-  currentResourceIds: string[];
-  inheritedResourceIds: string[];
-  artifactResourceIds: string[];
-}): string[] {
-  if (input.creationMode === "new") return [...new Set(input.currentResourceIds)];
-  return [...new Set([
-    ...input.currentResourceIds,
-    ...input.inheritedResourceIds,
-    ...(input.creationMode === "revise" ? input.artifactResourceIds : [])
-  ])];
-}
-
-function createRunContext(
-  conversationId: string,
-  contextVersion: number,
-  input: {
-    userInput: string;
-    resourceIds: string[];
-    skillId: string;
-    selectedSkills: CreationRunContext["selectedSkills"];
-    maxSteps: number;
-    requestedCreationMode: CreateConversationTurnRequest["creationMode"];
-    currentResourceIds: string[];
-    inheritedResourceIds: string[];
-    currentMaterialSummary: ConversationWorkingMemory["resourceContext"]["materialSummary"];
-    userMessages: RebuildUserMessage[];
-    artifactResourceIds: string[];
-  },
-  memory: ConversationWorkingMemory
-): CreationRunContext {
-  const intentResolution = resolveConversationIntent({
-    requestedCreationMode: input.requestedCreationMode,
-    currentInstruction: input.userInput,
-    currentResourceIds: input.currentResourceIds,
-    memory,
-    userMessages: input.userMessages
-  });
-  const creationMode: CreationRunContext["creationMode"] = intentResolution.mode === "clarify"
-    ? "continue"
-    : intentResolution.mode;
-  const revisionIntent = creationMode === "revise"
-    ? {
-        target: revisionTarget(input.userInput),
-        instruction: clip(input.userInput, 1000),
-        createdAt: new Date().toISOString()
-      }
-    : undefined;
-  const memorySnapshot = creationMode === "new"
-    ? createEmptyMemory(conversationId, contextVersion)
-    : memory;
-  const instructionMemory = rebuildInstructionMemory(input.userMessages, creationMode);
-  const resourceContext = buildResourceContext({
-    currentResourceIds: input.currentResourceIds,
-    inheritedResourceIds: input.inheritedResourceIds,
-    artifactResourceIds: input.artifactResourceIds,
-    currentMaterialSummary: input.currentMaterialSummary,
-    previousMemory: memorySnapshot,
-    creationMode
-  });
-  const resourceIds = effectiveRunResourceIds({
-    creationMode,
-    currentResourceIds: input.currentResourceIds,
-    inheritedResourceIds: resourceContext.inheritedResourceIds,
-    artifactResourceIds: resourceContext.artifactResourceIds
-  });
-  const selectedResources = new Set(resourceIds);
-  const materialSummary = new Map(
-    resourceContext.materialSummary
-      .filter((item) => selectedResources.has(item.resourceId))
-      .map((item) => [item.resourceId, item])
-  );
-  for (const item of input.currentMaterialSummary) {
-    if (selectedResources.has(item.resourceId)) materialSummary.set(item.resourceId, item);
-  }
-  return creationRunContextSchema.parse({
-    userInput: input.userInput,
-    resourceIds,
-    currentInstruction: input.userInput,
-    intentResolution,
-    creationMode,
-    currentResourceIds: input.currentResourceIds,
-    inheritedResourceIds: resourceContext.inheritedResourceIds,
-    resourceContext,
-    skillId: input.skillId,
-    selectedSkills: input.selectedSkills,
-    maxSteps: input.maxSteps,
-    contextVersion,
-    memory: {
-      instructionMemory,
-      brief: memorySnapshot.brief,
-      selectedTitle: memorySnapshot.selectedTitle,
-      outline: memorySnapshot.outline,
-      layoutPlan: memorySnapshot.layoutPlan,
-      draftSummary: memorySnapshot.draftSummary,
-      resourceContext,
-      materialSummary: [...materialSummary.values()],
-      userConstraints: memorySnapshot.userConstraints,
-      lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
-      revisionIntent
-    }
-  });
-}
-
 export function createConversationLifecycleService(
   databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/mediaforge",
   userSkills?: Pick<UserSkillService, "resolveMentions">
@@ -420,10 +301,9 @@ export function createConversationLifecycleService(
       [conversationId]
     );
     const artifactResourceIds = extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json);
-    const runContext = createRunContext(
-      conversationId,
-      contextVersion,
-      {
+    const runContext = assembleCreationRunContext({
+        conversationId,
+        contextVersion,
         userInput,
         resourceIds,
         skillId: selectedSkills[0]?.skillId ?? input.layoutSkillId,
@@ -434,10 +314,11 @@ export function createConversationLifecycleService(
         inheritedResourceIds: input.inheritedResourceIds,
         currentMaterialSummary,
         userMessages: userMessagesResult.rows,
-        artifactResourceIds
-      },
-      memory
-    );
+        artifactResourceIds,
+        memory,
+        v2Mode: creationContextV2ModeFromEnv(),
+        now: createdAt
+      });
     const job: CreationRunJob = {
       runId: run.id,
       conversationId,

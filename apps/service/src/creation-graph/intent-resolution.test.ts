@@ -2,6 +2,7 @@ import type { ConversationWorkingMemory } from "@mediaforge/contracts";
 import { describe, expect, it } from "vitest";
 import {
   isThinContinuationInstruction,
+  resolveCanonicalCreationRequest,
   resolveConversationIntent
 } from "./intent-resolution";
 
@@ -46,8 +47,94 @@ describe("resolveConversationIntent", () => {
     expect(intent.mode).toBe("continue");
     expect(intent.sameTopic).toBe(true);
     expect(intent.inheritedMessageIds).toEqual(["message_1"]);
-    expect(intent.effectiveInstruction).toContain("蚊子哪里跑");
-    expect(intent.effectiveInstruction).toContain("本轮指令：重新生成");
+    expect(intent.effectiveInstruction).toBe("重新生成");
+  });
+
+  it("treats a self-contained replacement prompt as a new creation without magic words", () => {
+    const request = resolveCanonicalCreationRequest({
+      requestedCreationMode: "auto",
+      currentInstruction: "请写一篇面向年轻父母的夏日亲子阅读公众号文章，语气轻松自然。",
+      currentResourceIds: [],
+      memory: {
+        ...emptyMemory,
+        lastArtifactId: "artifact_old",
+        brief: {
+          subject: "旧的舞蹈获奖主题",
+          goal: "event",
+          audience: "家长",
+          contentType: "活动报道",
+          tone: "warm",
+          storyAngle: "获奖故事",
+          materialRequirements: [],
+          resourceIds: [],
+          constraints: [],
+          prohibitedContent: [],
+          skillId: "auto"
+        }
+      },
+      userMessages: [
+        { id: "message_1", content: "写一篇舞蹈获奖文章" },
+        { id: "message_2", content: "请写一篇面向年轻父母的夏日亲子阅读公众号文章，语气轻松自然。" }
+      ]
+    });
+
+    expect(request.operation).toBe("new");
+    expect(request.baseArtifactId).toBeUndefined();
+    expect(request.inheritance).toEqual({
+      content: "replace",
+      presentation: "replace",
+      resources: "current_only"
+    });
+  });
+
+  it("maps a style-only request to a presentation revision", () => {
+    const request = resolveCanonicalCreationRequest({
+      requestedCreationMode: "auto",
+      currentInstruction: "换种风格重新实现",
+      currentResourceIds: [],
+      memory: {
+        ...emptyMemory,
+        lastArtifactId: "artifact_1",
+        brief: {
+          subject: "慢下来，才能看见的东西",
+          goal: "story",
+          audience: "公众号读者",
+          contentType: "个人感悟",
+          tone: "warm",
+          storyAngle: "术后慢行",
+          materialRequirements: [],
+          resourceIds: [],
+          constraints: [],
+          prohibitedContent: [],
+          skillId: "auto"
+        }
+      },
+      userMessages: [
+        { id: "message_1", content: "写一篇术后慢行的个人感悟" },
+        { id: "message_2", content: "换种风格重新实现" }
+      ]
+    });
+
+    expect(request.operation).toBe("revise");
+    expect(request.mutationScope).toEqual(["presentation"]);
+    expect(request.baseArtifactId).toBe("artifact_1");
+    expect(request.contentIdentity.topicSummary).toBe("慢下来，才能看见的东西");
+  });
+
+  it("clarifies an ambiguous request instead of inheriting silently", () => {
+    const request = resolveCanonicalCreationRequest({
+      requestedCreationMode: "auto",
+      currentInstruction: "做得更好一点",
+      currentResourceIds: [],
+      memory: { ...emptyMemory, lastArtifactId: "artifact_1" },
+      userMessages: [
+        { id: "message_1", content: "写一篇文章" },
+        { id: "message_2", content: "做得更好一点" }
+      ]
+    });
+
+    expect(request.operation).toBe("clarify");
+    expect(request.clarification?.reasonCode).toBe("CREATION_INTENT_AMBIGUOUS");
   });
 
   it("starts a new topic only when the user explicitly asks for it", () => {

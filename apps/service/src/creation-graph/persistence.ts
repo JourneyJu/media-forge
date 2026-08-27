@@ -22,13 +22,11 @@ import {
   creationRunContextSchema
 } from "@mediaforge/contracts";
 import { Pool, type PoolClient } from "pg";
+import { extractArtifactResourceIds } from "./context-rebuild";
 import {
-  buildResourceContext,
-  extractArtifactResourceIds,
-  rebuildInstructionMemory,
-  type RebuildUserMessage
-} from "./context-rebuild";
-import { resolveConversationIntent } from "./intent-resolution";
+  assembleCreationRunContext,
+  creationContextV2ModeFromEnv
+} from "../conversations/creation-context-assembler";
 
 interface RunRow {
   id: string;
@@ -231,87 +229,6 @@ function normalizeMemory(
     userConstraints: [],
     updatedAt: now(),
     ...(typeof memory === "object" ? memory : {})
-  });
-}
-
-function inferRevisionTarget(input: string): NonNullable<ConversationWorkingMemory["revisionIntent"]>["target"] {
-  if (/标题|题目/u.test(input)) return "title";
-  if (/结构|提纲|章节|段落顺序/u.test(input)) return "outline";
-  if (/图片|配图|封面|素材/u.test(input)) return "image";
-  if (/语气|风格|口吻|温暖|正式|自然/u.test(input)) return "style";
-  if (/第三段|正文|内容|加上|删掉|补充/u.test(input)) return "body";
-  return "all";
-}
-
-function createRunContext(
-  conversationId: string,
-  contextVersion: number,
-  input: CreationRunContextInput,
-  memory: ConversationWorkingMemory,
-  userMessages: RebuildUserMessage[],
-  artifactResourceIds: string[]
-): CreationRunContext {
-  const currentInstruction = input.currentInstruction ?? input.userInput;
-  const intentResolution = resolveConversationIntent({
-    requestedCreationMode: input.creationMode ?? "auto",
-    currentInstruction,
-    currentResourceIds: input.currentResourceIds ?? input.resourceIds,
-    memory,
-    userMessages
-  });
-  const creationMode: CreationRunContext["creationMode"] = intentResolution.mode === "clarify"
-    ? "continue"
-    : intentResolution.mode;
-  const revisionIntent = creationMode === "revise"
-    ? {
-        target: inferRevisionTarget(currentInstruction),
-        instruction: clip(currentInstruction, 1000),
-        createdAt: now()
-      }
-    : undefined;
-  const memorySnapshot = creationMode === "new"
-    ? createEmptyMemory(conversationId, contextVersion)
-    : memory;
-  const currentResourceIds = input.currentResourceIds ?? input.resourceIds;
-  const inheritedResourceIds = input.inheritedResourceIds ?? [];
-  const currentMaterialSummary = currentResourceIds.map((resourceId) => ({
-    resourceId,
-    type: "unknown" as const,
-    description: `资源 ${resourceId}`
-  }));
-  const instructionMemory = rebuildInstructionMemory(userMessages, creationMode);
-  const resourceContext = buildResourceContext({
-    currentResourceIds,
-    inheritedResourceIds,
-    artifactResourceIds,
-    currentMaterialSummary,
-    previousMemory: memorySnapshot,
-    creationMode
-  });
-
-  return creationRunContextSchema.parse({
-    ...input,
-    currentInstruction,
-    intentResolution,
-    creationMode,
-    currentResourceIds,
-    inheritedResourceIds,
-    resourceContext,
-    contextVersion,
-    memory: {
-      instructionMemory,
-      brief: memorySnapshot.brief,
-      selectedTitle: memorySnapshot.selectedTitle,
-      outline: memorySnapshot.outline,
-      presentationStyleDecision: memorySnapshot.presentationStyleDecision,
-      layoutPlan: memorySnapshot.layoutPlan,
-      draftSummary: memorySnapshot.draftSummary,
-      resourceContext,
-      materialSummary: resourceContext.materialSummary,
-      userConstraints: memorySnapshot.userConstraints,
-      lastArtifactId: revisionIntent ? memorySnapshot.lastArtifactId : undefined,
-      revisionIntent
-    }
   });
 }
 
@@ -739,14 +656,30 @@ export function createCreationPersistence(databaseUrl = process.env.DATABASE_URL
            limit 1`,
           [run.conversationId]
         );
-        const runContext = createRunContext(
-          run.conversationId,
-          job.contextVersion,
-          context,
+        const currentInstruction = context.currentInstruction ?? context.userInput;
+        const currentResourceIds = context.currentResourceIds ?? context.resourceIds;
+        const runContext = assembleCreationRunContext({
+          conversationId: run.conversationId,
+          contextVersion: job.contextVersion,
+          userInput: currentInstruction,
+          resourceIds: context.resourceIds,
+          skillId: context.skillId,
+          selectedSkills: context.selectedSkills,
+          maxSteps: context.maxSteps,
+          requestedCreationMode: context.creationMode ?? "auto",
+          currentResourceIds,
+          inheritedResourceIds: context.inheritedResourceIds ?? [],
+          currentMaterialSummary: currentResourceIds.map((resourceId) => ({
+            resourceId,
+            type: "unknown" as const,
+            description: `资源 ${resourceId}`
+          })),
+          userMessages: userMessagesResult.rows,
+          artifactResourceIds: extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json),
           memory,
-          userMessagesResult.rows,
-          extractArtifactResourceIds(latestArtifactResult.rows[0]?.payload_json)
-        );
+          v2Mode: creationContextV2ModeFromEnv(),
+          now: run.createdAt
+        });
         await client.query(
           `insert into runs
             (id, conversation_id, type, status, current_step, lock_version, plan_json, steps_json, created_at, updated_at)
