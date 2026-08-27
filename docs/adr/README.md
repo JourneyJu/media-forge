@@ -36,3 +36,4 @@ ADR 用于记录影响长期架构的决策。
 | `014-agent-reasoning-sidecar-summary.md` | Accepted | 使用非阻塞旁路摘要器生成受控分析动态，并在 Agent 完成后清除展示。 |
 | `015-max-review-output-last-draft.md` | Accepted | 审校达到上限时输出最后一次安全草稿，并显式标记质量提醒。 |
 | `016-independent-presentation-director.md` | Accepted | 将内容呈现判断拆为独立 Presentation Director，Layout Agent 只编译受控版式。 |
+| `017-server-owned-agent-structure-identity.md` | Accepted | 模型只生成创作字段和局部章节选择，服务端统一绑定稳定章节身份与结构版本。 |

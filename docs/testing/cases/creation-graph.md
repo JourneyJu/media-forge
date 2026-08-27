@@ -267,17 +267,17 @@ schema 后成为 AgentOutput；浏览器收不到原始 reasoning 或残缺 JSON
 
 期望：Structure Guard 通过；图片和版式仍关联原章节；Artifact 正常生成，不返回 `CONTENT_PLAN_DRIFT`。
 
-## CG-038 Revision 篡改章节集合立即失败
+## CG-038 Revision 改变章节数量立即失败
 
-步骤：分别模拟 Revision 删除章节、新增未知章节、重复 `sectionId` 和交换章节顺序。
+步骤：分别模拟 Revision Raw 输出删除章节和新增章节；另在 Structure Guard 单元测试中构造重复 `sectionId` 和交换身份顺序的 Canonical Draft。
 
-期望：在 Revision 后分别返回 `SECTION_SET_MISMATCH`、`SECTION_ID_DUPLICATED` 或 `SECTION_ORDER_DRIFT`；不进入 Layout、Review 或 Artifact。
+期望：Raw 输出章节数量不一致时进入一次节点级结构纠错；Canonical Draft 的重复或换序身份分别返回 `SECTION_ID_DUPLICATED` 或 `SECTION_ORDER_DRIFT`；不进入 Layout、Review 或 Artifact。
 
 ## CG-039 图片与版式引用未知章节
 
-步骤：让 ImagePlan 或 LayoutPlan 使用不在当前 ContentPlan 中的 `sectionId`。
+步骤：让 ImagePlan 或 LayoutPlan Raw 输出使用越界 `sectionIndex`；另构造引用不在当前 ContentPlan 中 `sectionId` 的 Canonical 对象。
 
-期望：责任节点后的 Structure Guard 返回 `SECTION_REFERENCE_INVALID`；不通过标题或索引猜测归属。
+期望：越界索引在 Raw 校验层进入一次节点级纠错；Canonical 对象的未知引用由 Structure Guard 返回 `SECTION_REFERENCE_INVALID`；不通过标题或语义相似度猜测归属。
 
 ## CG-040 结构重规划使旧产物失效
 
@@ -293,11 +293,11 @@ schema 后成为 AgentOutput；浏览器收不到原始 reasoning 或残缺 JSON
 
 期望：依次回到 Title、Revision、Image Planner、Layout、Content Planner 和 Brief/Clarification；多个问题从最上游受影响节点开始，不统一交给 Revision。
 
-## CG-042 模型章节身份纠错
+## CG-042 模型章节结构纠错
 
-步骤：模型第一次漏传、重复或生成未知 `sectionId`，第二次根据允许 ID 列表返回正确结构。
+步骤：模型第一次返回错误章节数量或非法局部 `sectionIndex`，第二次根据期望章节数和允许索引返回正确结构。
 
-期望：第一次产生结构化纠错事件，第二次通过；纠错不消耗内容 Revision 轮次。第二次仍失败时节点明确失败且不创建 Artifact。
+期望：模型输出不包含系统 ID；第一次产生结构化纠错事件，第二次通过并由服务端绑定权威身份；纠错不消耗内容 Revision 轮次。第二次仍失败时节点明确失败且不创建 Artifact。
 
 ## CG-043 历史无章节身份输出兼容
 
@@ -385,3 +385,35 @@ schema 后成为 AgentOutput；浏览器收不到原始 reasoning 或残缺 JSON
 步骤：模拟 Presentation Director 返回 raw HTML、CSS、脚本、对象存储内部地址、完整 prompt 或正文改写字段。
 
 期望：schema 或安全校验失败并产生 `PRESENTATION_STYLE_INVALID`；不写入合法 AgentOutput，不进入 Layout，不创建 Artifact。
+
+## CG-056 模型输出不再承载系统章节身份
+
+前置：ContentPlan 已由服务端生成 4 个 `sectionId` 和一个 `structureVersion`。
+
+步骤：分别执行 Outline、Writer、Revision 和 Presentation，检查提交给 Model Gateway 的输出合同和模型 Raw Output；模拟供应商额外返回一个字符转置的 `sectionId`。
+
+期望：输出合同不要求模型返回 `sectionId` 或 `structureVersion`；额外系统字段不能覆盖 ContentPlan；Canonical Outline、Draft 和 Presentation 使用服务端注入的权威版本和章节身份。
+
+## CG-057 Canonicalizer 只绑定等基数有序章节
+
+步骤：让 Outline 或 Writer 分别返回与 ContentPlan 相同数量、少一章、多一章的 Raw sections；相同数量场景修改标题文本但保持数组顺序。
+
+期望：相同数量时按 ContentPlan 顺序绑定权威 `sectionId`，标题润色正常通过；少章和多章时不截断、不补造、不按标题猜测，当前节点进入一次结构纠错。
+
+## CG-058 图片与版式局部索引转换
+
+步骤：让 ImagePlan 和 LayoutPlan 分别返回有效 `sectionIndex`、负数、越界值和非整数；随后尝试把旧结构版本的索引用于新 ContentPlan。
+
+期望：有效索引转换成当前 ContentPlan 对应的 `sectionId`；非法索引在 Raw 校验层失败并触发一次节点纠错；索引不作为跨 Run 或跨版本身份持久化，Canonical Guard 不接受未知引用。
+
+## CG-059 节点级结构纠错边界
+
+步骤：第一次让 Outline 返回错误章节数量，第二次返回正确数量；再模拟第二次仍错误。记录 Agent 调用、Revision 计数、队列尝试次数和 Graph 节点轨迹。
+
+期望：首次错误只重试 Outline 一次，成功后继续后续节点；纠错不增加内容 Revision 次数，不触发整条 Graph 或 BullMQ 重试。第二次仍失败时 Run 明确失败且不创建 Artifact。
+
+## CG-060 Canonical Guard 失败不交给模型修复
+
+步骤：绕过 Raw 层构造版本过期、重复 ID 或未知引用的 Canonical 对象并执行 Structure Guard。
+
+期望：分别返回 `STRUCTURE_VERSION_STALE`、`SECTION_ID_DUPLICATED` 或 `SECTION_REFERENCE_INVALID`；不发起模型纠错，日志将其标记为服务端一致性或状态污染问题。

@@ -146,16 +146,20 @@ Revision Agent 默认不得修改标题、副标题或标题候选集合。Revie
 
 ## 章节身份与结构版本
 
-当前实现仍依赖标题与 `sectionIndex`，可能把标题自然润色误判为 `CONTENT_PLAN_DRIFT`。目标实现中，跨 Agent 章节关联以服务端生成的 `sectionId` 为事实，不以 `heading`、`title` 或标题相似度判断身份。`ContentPlan` 通过 schema 后生成章节 ID 和 `structureVersion`，Outline、Draft、ImagePlan、LayoutPlan 与 ArticleDocument 必须沿用该身份。
+当前实现使用服务端生成的 `sectionId` 和 `structureVersion` 约束跨 Agent 章节关联，不再以 `heading`、`title` 或标题相似度判断身份。模型输入和 Raw 输出均剥离系统身份，并通过 Model Raw Output → Canonicalizer → Structure Guard 三段边界形成正式领域对象，避免模型复制非空 ID 时的字符错误。
 
 - 章节展示标题允许 Writer 或 Revision 自然润色，不改变 `sectionId`。
-- `sectionIndex` 只用于排序和渲染，由当前章节顺序派生。
+- `sectionId` 和 `structureVersion` 只由服务端创建、注入和校验，模型 Raw Schema 不包含这些字段。
+- Outline、Draft 和 Revision 先校验章节数量，再由 Canonicalizer 按 ContentPlan 顺序绑定权威 ID。
+- ImagePlan 和 LayoutPlan 只在单次模型调用中使用 `sectionIndex` 选择章节，服务端校验后转换为 `sectionId`。
+- `sectionIndex` 只用于局部选择、排序和渲染，由当前章节顺序派生，不承担跨 Agent 身份职责。
 - Writer 和 Revision 不得增删、换序或替换章节身份。
 - 合法结构调整必须回到 Content Planner，产生新 `structureVersion`，并使旧下游输出失效。
-- Outline、ImagePlan、Draft、Revision 和 Layout 输出后执行确定性 Structure Guard；结构错误不得拖到 Artifact 阶段首次发现。
+- Raw Schema、章节数量或局部索引错误只允许当前节点做一次结构纠错，不消耗内容 Revision 次数，也不触发整条 Graph 重跑。
+- Outline、ImagePlan、Draft、Revision 和 Layout 完成 Canonicalize 后执行确定性 Structure Guard；结构错误不得拖到 Artifact 阶段首次发现。
 - 历史无 ID 输出只在读取层按旧索引适配；无法一一映射时重跑受影响节点，不回写历史快照。
 
-Structure Guard 使用 `SECTION_ID_MISSING`、`SECTION_ID_DUPLICATED`、`SECTION_SET_MISMATCH`、`SECTION_ORDER_DRIFT`、`SECTION_REFERENCE_INVALID` 和 `STRUCTURE_VERSION_STALE` 区分失败原因。完整方案见 `docs/specs/020-stable-section-identity-and-structure-guard.md`。
+Structure Guard 使用 `SECTION_ID_MISSING`、`SECTION_ID_DUPLICATED`、`SECTION_SET_MISMATCH`、`SECTION_ORDER_DRIFT`、`SECTION_REFERENCE_INVALID` 和 `STRUCTURE_VERSION_STALE` 区分 Canonical 对象失败原因。模型 Raw 输出错误与 Canonical Guard 错误必须分层记录。完整方案见 `docs/specs/020-stable-section-identity-and-structure-guard.md`，长期取舍见 `docs/adr/017-server-owned-agent-structure-identity.md`。
 
 ## 会话记忆输入
 

@@ -47,9 +47,11 @@
 
 ## 结构身份与版本验证
 
-结构一致性测试应覆盖 `sectionId` 和 `structureVersion` 在 ContentPlan、Outline、Draft、ImagePlan、LayoutPlan 与 ArticleDocument 之间的完整传递。标题文本变化不应改变章节身份；增删、换序、重复 ID、未知引用和过期版本必须在责任节点后的 Structure Guard 被发现。
+结构一致性测试应覆盖 Model Raw Output → Canonicalizer → Structure Guard → ArticleDocument 的完整边界。模型 Raw Schema 不得要求 Outline、Draft、Revision 或 Presentation 回传 `sectionId`、`structureVersion`；Canonical 对象必须由当前 ContentPlan 注入权威身份，并在 Outline、Draft、ImagePlan、LayoutPlan 与 ArticleDocument 之间保持一致。
 
-模型输出纠错测试需要区分两类重试：schema/结构格式纠错不消耗内容 Revision 次数，Review 引发的内容修订按现有修订上限计数。历史兼容测试必须验证旧 payload 只读映射和无法可靠映射时的重跑行为。
+Outline、Draft 和 Revision 只有在章节数量与 ContentPlan 完全一致时才允许按顺序绑定。ImagePlan 和 LayoutPlan 的 `sectionIndex` 只作为单次调用内的局部选择，必须先验证整数范围再转换为 `sectionId`。标题文本变化不应改变章节身份；增删章节、无效索引、重复引用、未知 Canonical 引用和过期版本必须在责任节点后被发现。
+
+模型输出纠错测试需要区分三类行为：Raw Schema、章节数量或局部索引错误最多纠错当前节点一次；纠错不消耗内容 Revision 次数，也不触发队列级或整 Graph 重试；Canonical Structure Guard 失败不交给模型修复。Review 引发的内容修订按现有修订上限计数。历史兼容测试必须验证旧 payload 只读映射和无法可靠映射时的重跑行为。
 
 ## 流式过程反馈
 
@@ -180,6 +182,10 @@ Writer Agent 抛错
 - 新 ContentPlan 与旧 Draft、ImagePlan 或 LayoutPlan 因缺少结构版本而混用。
 - Revision 擅自增删或换序章节，直到 Artifact 阶段才被发现。
 - 历史适配器通过标题相似度猜测章节，掩盖真实结构冲突。
+- 模型 Raw 输出继续携带系统 ID，字符转置或截断导致正常内容失败。
+- Canonicalizer 在章节数量不一致时按位置强行绑定，掩盖真实增删章。
+- `sectionIndex` 越界、跨版本复用或被错误持久化为主身份。
+- 节点级结构纠错错误计入内容 Revision，或意外触发整条 Graph 重跑。
 
 ## 旁路摘要专项验证
 

@@ -2,13 +2,15 @@
 
 ## 状态
 
-已实施。
+已实施。稳定章节身份、模型输入/输出身份剥离、Canonicalizer、节点级结构纠错和 Structure Guard 已上线。
 
 ## 背景
 
 当前 `ContentPlan`、`ArticleOutline`、`ArticleDraft`、`ImagePlan` 和 `LayoutPlan` 之间主要依靠章节标题与 `sectionIndex` 建立关系。章节标题是可编辑文案，Writer 或 Revision 对标题做自然润色后，即使章节语义、顺序和内容完全不变，也可能在 Artifact Builder 中被 `CONTENT_PLAN_DRIFT` 拒绝。相反，真正的删章、加章、换序、图片错配和旧版式引用只能在链路末端被发现。
 
 生产故障已经证明标题完全相等不是可靠的结构身份：Content Planner 输出“开场：舞台上的那一束光”，Writer 输出“舞台上的那一束光”，最终质量审校通过，但微信排版因字符串不相等失败。
+
+2026-08-27 的生产故障进一步暴露了实现缺口：Outline Agent 被要求原样复制不可读的 `sectionId`，但模型将第一章 ID 中的字符顺序抄错。模型输出满足基础 schema，服务端归一化逻辑又只补齐缺失 ID，因此 Structure Guard 正确返回 `SECTION_SET_MISMATCH` 并终止生成。该故障说明“系统生成身份”与“要求模型可靠透传身份”互相矛盾。
 
 ## 目标
 
@@ -24,6 +26,7 @@
 - 不改变浏览器到服务端的 HTTP API。
 - 不新增数据库表或修改现有表结构。
 - 不让大模型判断两个章节是否为同一章节。
+- 不让大模型生成、复制或修复 `sectionId` 和 `structureVersion`。
 - 不使用标题语义相似度作为新链路的主身份机制。
 - 不允许 Artifact Builder 静默修复真实结构冲突。
 
@@ -48,9 +51,10 @@
 规则：
 
 - 同一个 `structureVersion` 内不可修改、重复或复用其他章节的 ID。
-- Outline、Draft、ImagePlan、LayoutPlan 和 ArticleDocument 只能引用输入中存在的 ID。
+- Canonical Outline、Draft、ImagePlan、LayoutPlan 和 ArticleDocument 只能包含服务端绑定的有效 ID。
+- 模型原始输出不得包含 `sectionId`；需要选择章节的图片和版式输出只使用本次调用内的 `sectionIndex`。
 - `heading`、`title` 和其他展示文案可以修改，不改变章节身份。
-- 模型漏传或生成未知 ID 时，按契约错误处理，不根据标题猜测。
+- `sectionIndex` 只用于当前模型调用的局部定位，服务端完成绑定后不得作为跨 Agent 事实身份。
 
 目标契约：
 
@@ -86,6 +90,8 @@ interface LayoutBlock {
 
 `structureVersion` 标识本 Run 中一套相互兼容的章节结构。ContentPlan 首次建立结构时生成版本；合法的增章、删章、拆章、合章或换序必须重新规划并产生新版本。
 
+`structureVersion` 同样不属于模型创作字段。模型原始输出不得返回该字段；服务端 Canonicalizer 从当前 ContentPlan 注入权威版本。Presentation 等不引用章节的节点也由服务端附加版本，不能依赖模型回显。
+
 新版本产生后，旧 Outline、Draft、ImagePlan 和 LayoutPlan 视为过期，必须从最早受影响节点重新生成，不得与新计划拼接。
 
 ## 目标流程
@@ -93,14 +99,20 @@ interface LayoutBlock {
 ```mermaid
 flowchart TD
   A["ContentPlannerAgent"] --> B["服务端注入 sectionId 和 structureVersion"]
-  B --> C["OutlineAgent"]
-  C --> D["Structure Guard: Outline"]
-  D --> E["ImagePlannerAgent"]
-  E --> F["Structure Guard: ImagePlan"]
-  F --> G["WriterAgent"]
-  G --> H["Structure Guard: Draft"]
-  H --> I["LayoutAgent"]
-  I --> J["Structure Guard: LayoutPlan"]
+  B --> C["OutlineAgent: raw content"]
+  C --> C1["Canonicalizer: bind version and IDs"]
+  C1 --> D["Structure Guard: Outline"]
+  D --> E["ImagePlannerAgent: raw content and local indexes"]
+  E --> E1["Canonicalizer: resolve indexes and bind version"]
+  E1 --> F["Structure Guard: ImagePlan"]
+  F --> G["WriterAgent: raw content"]
+  G --> G1["Canonicalizer: bind version and IDs"]
+  G1 --> H["Structure Guard: Draft"]
+  H --> P1["PresentationDirectorAgent: raw presentation"]
+  P1 --> P2["Canonicalizer: bind version"]
+  P2 --> I["LayoutAgent: raw blocks and local indexes"]
+  I --> I1["Canonicalizer: resolve indexes and bind version"]
+  I1 --> J["Structure Guard: LayoutPlan"]
   J --> K["ReviewerAgent"]
   K --> L{"Review target"}
   L -->|"title/body/cta"| M["RevisionAgent"]
@@ -109,13 +121,16 @@ flowchart TD
   L -->|"plan/outline"| A
   L -->|"brief"| N["BriefAgent / Clarification"]
   L -->|"passed"| O["Final Structure Guard"]
-  M --> H
+  M --> M1["Canonicalizer: bind version and IDs"]
+  M1 --> H
   O --> P["Artifact Builder"]
 ```
 
 ## Structure Guard
 
 Structure Guard 是服务端确定性校验，不调用模型。它在 Outline、ImagePlan、Writer、Revision、Layout 和 Artifact 前执行。
+
+Structure Guard 只校验已经 Canonicalize 的领域对象。模型 Raw Schema、章节数量和局部索引错误由 Agent 输出校验层处理；如果服务端绑定后的对象仍触发身份或版本错误，应视为代码缺陷、旧状态混用或版本污染，而不是继续让模型修复。
 
 至少检查：
 
@@ -128,16 +143,19 @@ Structure Guard 是服务端确定性校验，不调用模型。它在 Outline�
 | `SECTION_REFERENCE_INVALID` | 图片或版式引用未知章节 |
 | `STRUCTURE_VERSION_STALE` | 输出属于过期结构版本 |
 
-Writer 和 Revision 可以修改 `heading`、正文、强调语和 CTA，但不得增删、换序章节，也不得修改 `sectionId`。标题变化本身不是结构错误。
+Writer 和 Revision 可以修改 `heading`、正文、强调语和 CTA，但 Raw 输出不得增删章节。它们不接触 `sectionId`；Canonicalizer 只在章节数量一致时按当前 ContentPlan 顺序绑定身份。标题变化本身不是结构错误。
 
 ## 模型输出纠错
 
-模型输出缺少、重复或篡改章节 ID 时：
+模型只负责创作字段，不负责系统身份。处理规则如下：
 
-1. schema 或 Structure Guard 立即返回具体差异。
-2. Model Gateway 使用允许的 `sectionId` 列表、当前 `structureVersion` 和错误码做一次结构化纠错重试。
-3. 重试成功后继续当前节点；重试失败则结束该节点。
-4. 不得由 Artifact Builder 使用标题模糊匹配后静默放行。
+1. 模型调用输入和 Outline、Draft、Revision 的 Raw Schema 均剥离 `sectionId`、`structureVersion`；Ordered Raw 输出进入 Canonicalizer 后必须证明章节数量与 ContentPlan 完全一致，供应商额外返回的系统字段不得覆盖权威值。
+2. ImagePlan 和 LayoutPlan 通过 `sectionIndex` 表达本次调用内的章节选择；服务端校验索引为整数且位于当前章节范围内，再转换为 `sectionId`。
+3. Presentation 等不引用章节的输出不返回结构版本，服务端在形成 Canonical 对象时注入当前 `structureVersion`。
+4. Raw Schema、章节数量或索引校验失败时，Model Gateway 使用期望章节数、允许索引和安全错误摘要做一次节点级纠错重试。
+5. 纠错成功后由 Canonicalizer 注入权威身份并执行 Structure Guard；纠错失败则结束当前节点。
+6. Canonicalizer 不得在章节数量不一致时按位置强行绑定，不得通过标题或语义相似度猜测身份。
+7. Artifact Builder 不得承担普通模型输出纠错，只保留发布前最终门禁。
 
 业务内容错误与模型格式错误分开计数。纠错重试不等同于 Review Revision，不消耗内容修订轮次。
 
@@ -203,8 +221,10 @@ affectedSectionId
 
 建议指标：
 
+- 各节点 Raw Schema、章节数量和局部索引错误率。
+- 节点级结构纠错尝试次数、成功率和额外耗时。
 - 各节点结构校验失败率。
-- 模型结构纠错成功率。
+- Canonicalize 后首次触发 Structure Guard 的比例；该指标非零时优先排查服务端实现或状态污染。
 - Review 按 target 的回退次数。
 - Artifact 阶段首次发现结构错误的比例；目标应接近零。
 - 历史适配成功率和需要重跑的比例。
@@ -214,18 +234,22 @@ affectedSectionId
 1. 兼容止血：旧标题归一化、细化日志和回归测试。
 2. 契约升级：引入 `sectionId`、`structureVersion` 和 schema version。
 3. ID 注入：ContentPlan 校验后由服务端生成身份。
-4. 下游贯穿：Outline、ImagePlan、Draft、LayoutPlan 和 ArticleDocument 引用稳定身份。
-5. 阶段门禁：在各结构节点后增加 Structure Guard 和一次模型纠错。
-6. 定向路由：按 Review target 回退到真正责任节点。
-7. 历史适配：只读映射旧输出，无法可靠映射时重跑。
-8. 观测收敛：确认 Artifact 首次发现结构错误率达到目标后，移除新 Run 的标题兼容路径。
+4. 下游贯穿：Canonical Outline、ImagePlan、Draft、LayoutPlan 和 ArticleDocument 使用稳定身份。
+5. 身份解耦：新增模型 Raw Schema 和 Canonicalizer，模型不再输出系统 ID 与版本。
+6. 阶段门禁：在各结构节点 Canonicalize 后执行 Structure Guard，并为 Raw 输出错误增加一次节点级纠错。
+7. 定向路由：按 Review target 回退到真正责任节点。
+8. 历史适配：只读映射旧输出，无法可靠映射时重跑。
+9. 观测收敛：确认 Artifact 首次发现结构错误率达到目标后，移除新 Run 的标题兼容路径。
 
 ## 验收标准
 
 - “开场：舞台上的那一束光”改为“舞台上的那一束光”时正常生成 Artifact。
 - Writer 或 Revision 修改章节展示标题后，图片和版式仍引用同一 `sectionId`。
-- Writer 或 Revision 增章、删章、换序或篡改 ID 时，在该节点后立即失败或纠错，不进入 Artifact。
+- Outline、Writer 和 Revision 的模型输出不再包含 `sectionId` 或 `structureVersion`；服务端形成的 Canonical 对象仍携带正确身份。
+- Writer 或 Revision 增章、删章时，在 Raw 输出校验阶段立即失败或纠错，不进入 Artifact。
+- 模型返回额外的伪造或抄错 ID 时不会覆盖服务端身份。
 - ImagePlan 和 LayoutPlan 引用未知章节时返回 `SECTION_REFERENCE_INVALID`。
+- ImagePlan 和 LayoutPlan 的局部索引越界时只纠错当前节点，不触发整条 Graph 重跑。
 - 合法结构重规划后 `structureVersion` 变化，旧下游产物不得复用。
 - Review 的图片、版式、结构问题分别回到 Image Planner、Layout Agent 和 Content Planner。
 - 历史会话可直接重新生成；无法可靠适配时自动重跑受影响节点，不要求创建新会话。
